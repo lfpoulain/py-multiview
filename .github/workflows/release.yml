@@ -21,9 +21,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -46,7 +46,7 @@ jobs:
           "version=$base.${{ github.run_number }}" >> $env:GITHUB_OUTPUT
 
       - name: Cache standard FFmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: bin/standard
           key: ffmpeg-standard-${{ hashFiles('scripts/ffmpeg-standard.json') }}
@@ -60,7 +60,7 @@ jobs:
       - name: Build
         run: ./scripts/build.ps1 -Python python -Version ${{ steps.version.outputs.version }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: py-multiview-${{ steps.version.outputs.version }}
           path: |
@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: py-multiview-${{ needs.build.outputs.version }}
           path: dist
