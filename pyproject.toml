@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-multiview"
+dynamic = ["version"]
+description = "Affiche des flux SRT / OMT en plein écran sur plusieurs écrans Windows, avec routage multicast et émission OMT."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "CC BY-NC-SA 4.0" }
+authors = [{ name = "LFPoulain" }]
+dependencies = [
+  "PySide6-Essentials>=6.8",
+  "screeninfo>=0.8",
+  "PyAudioWPatch>=0.2.12",
+]
+
+[project.scripts]
+py-multiview = "py_multiview.app:main"
+
+[project.urls]
+Homepage = "https://github.com/lfpoulain/py-multiview"
+Issues = "https://github.com/lfpoulain/py-multiview/issues"
+License = "https://creativecommons.org/licenses/by-nc-sa/4.0/"
+
+[tool.setuptools]
+packages = ["py_multiview", "py_multiview.ui"]
+
+[tool.setuptools.dynamic]
+version = { attr = "py_multiview.__version__" }
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N"]
+ignore = [
+  "E501",  # long UI strings / SVG paths are clearer on one line
+  "N802",  # Qt overrides (closeEvent, mousePressEvent...)
+  "N801",  # Win32 structure names
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

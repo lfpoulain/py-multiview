@@ -1,0 +1,24 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.python-version
+*.egg-info/
+
+# Build outputs
+build/
+dist/
+
+# Downloaded FFmpeg (scripts/fetch-ffmpeg.ps1); bin/omt is versioned
+bin/standard/
+bin/*.exe
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

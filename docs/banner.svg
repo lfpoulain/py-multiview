@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#151827"/>
+      <stop offset="1" stop-color="#0b0d14"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff8af5"/>
+      <stop offset="1" stop-color="#4f6bff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7c6cff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#7c6cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="300" rx="24" fill="url(#bg)"/>
+  <circle cx="230" cy="150" r="170" fill="url(#glow)"/>
+
+  <!-- Monitor with streaming lines (brand mark) -->
+  <g transform="translate(120 70)">
+    <rect x="0" y="0" width="150" height="110" rx="6" fill="url(#brand)"/>
+    <rect x="120" y="14" width="110" height="22" rx="11" fill="url(#brand)" opacity="0.9"/>
+    <rect x="135" y="46" width="90" height="22" rx="11" fill="url(#brand)" opacity="0.75"/>
+    <rect x="125" y="78" width="70" height="22" rx="11" fill="url(#brand)" opacity="0.6"/>
+    <rect x="62" y="110" width="26" height="22" fill="#5a6cff"/>
+    <rect x="35" y="130" width="80" height="12" rx="6" fill="#4f6bff"/>
+  </g>
+
+  <g font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif">
+    <text x="420" y="135" font-size="64" font-weight="700" fill="#e7e9f0">py-multiview</text>
+    <text x="422" y="185" font-size="26" fill="#a1a9ba">Vos flux SRT et OMT en plein écran, sur chaque écran.</text>
+    <g font-size="17" font-weight="600">
+      <rect x="422" y="214" width="96" height="34" rx="17" fill="#12342a"/>
+      <text x="470" y="237" fill="#34d399" text-anchor="middle">SRT</text>
+      <rect x="530" y="214" width="96" height="34" rx="17" fill="#1e2148"/>
+      <text x="578" y="237" fill="#a99dff" text-anchor="middle">OMT</text>
+      <rect x="638" y="214" width="130" height="34" rx="17" fill="#13284a"/>
+      <text x="703" y="237" fill="#60a5fa" text-anchor="middle">Multicast</text>
+      <rect x="780" y="214" width="124" height="34" rx="17" fill="#232837"/>
+      <text x="842" y="237" fill="#a1a9ba" text-anchor="middle">Windows</text>
+    </g>
+  </g>
+</svg>
