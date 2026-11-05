@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from . import audio
+from . import audio, native, omtlib
 from .ffmpeg import (
     GPU_DECODERS,
     PLAYER_ENV,
@@ -47,10 +47,23 @@ NO_OMT_PLAYER = "Aucun ffplay compatible OMT (bin/omt manquant)."
 NO_OMT_FFMPEG = "Aucun ffmpeg compatible OMT (bin/omt manquant)."
 
 
+def native_worker(key: str) -> native.NativeWorker | None:
+    """The libomt worker for ``key``, or None to fall back to FFmpeg."""
+    if not omtlib.available():
+        return None
+    return native.ScreenSender() if key == SENDER else native.AudioMonitor()
+
+
 class Engine:
-    def __init__(self, tools: ToolchainRegistry | None = None, supervisor: Supervisor | None = None) -> None:
+    def __init__(
+        self,
+        tools: ToolchainRegistry | None = None,
+        supervisor: Supervisor | None = None,
+        worker_factory=native_worker,
+    ) -> None:
         self.tools = tools or ToolchainRegistry()
         self.sup = supervisor or Supervisor()
+        self.worker_factory = worker_factory
         self.host_ip = local_ip()
         self._loopback: audio.LoopbackDevice | bool | None = None
         self.config: dict = {}
@@ -59,6 +72,8 @@ class Engine:
         self.desired_routes: set[str] = set()
         self.sender_desired = False
         self.monitor_desired = False
+        # OMT jobs running in-process on libomt, keyed like supervised processes.
+        self.workers: dict[str, native.NativeWorker] = {}
         self.active_routes: set[str] = set()  # explicitly started or used by a started stream
         self.errors: dict[str, str] = {}
 
@@ -129,6 +144,8 @@ class Engine:
         self.desired_routes.clear()
         self.sender_desired = False
         self.monitor_desired = False
+        for worker in self.workers.values():
+            worker.stop()
         self.sup.stop_all()
 
     def tick(self) -> None:
@@ -158,9 +175,15 @@ class Engine:
             return ProcessInfo(Status.STOPPED)
         if key in self.errors:
             return ProcessInfo(Status.ERROR, self.errors[key])
+        worker = self.workers.get(key)
+        if worker is not None and worker.alive():
+            return worker.info()
         return self.sup.info(key)
 
     def log_lines(self, key: str) -> list[str]:
+        worker = self.workers.get(key)
+        if worker is not None and (worker.alive() or worker.log):
+            return list(worker.log)
         return self.sup.log_lines(key)
 
     # -- reconciliation ----------------------------------------------------
@@ -210,18 +233,86 @@ class Engine:
                 self.sup.stop(key)
 
         if self.sender_desired:
-            spec, error = self._sender_spec()
-            self._apply(SENDER, spec, error, new_errors)
+            self._reconcile_sender(new_errors)
         else:
-            self.sup.stop(SENDER)
+            self._stop_both(SENDER)
 
         if self.monitor_desired:
-            spec, error = self._monitor_spec()
-            self._apply(MONITOR, spec, error, new_errors)
+            self._reconcile_monitor(new_errors)
         else:
-            self.sup.stop(MONITOR)
+            self._stop_both(MONITOR)
 
         self.errors = new_errors
+
+    # -- OMT jobs: libomt when available, FFmpeg otherwise -----------------
+
+    def _worker(self, key: str):
+        """The native worker for ``key``, created on first use."""
+        worker = self.workers.get(key)
+        if worker is None:
+            worker = self.worker_factory(key)
+            if worker is None:
+                return None
+            self.workers[key] = worker
+        return worker
+
+    def _stop_both(self, key: str) -> None:
+        self.sup.stop(key)
+        worker = self.workers.get(key)
+        if worker is not None:
+            worker.stop()
+
+    def _fail(self, key: str, error: str, errors: dict[str, str]) -> None:
+        if self.errors.get(key) != error:
+            log.warning("[%s] non démarré: %s", key, error)
+        self._stop_both(key)
+        errors[key] = error
+
+    def _reconcile_sender(self, errors: dict[str, str]) -> None:
+        sender = self.config.get("sender", {})
+        if not sender.get("displayId"):
+            return self._fail(SENDER, "Aucun écran à émettre sélectionné.", errors)
+        display = self._display(sender["displayId"])
+        if display is None:
+            return self._fail(SENDER, "L'écran à émettre est absent ou débranché.", errors)
+
+        worker = self._worker(SENDER)
+        if worker is not None:
+            source = sender.get("audioSource", "")
+            params = (
+                sender["name"], int(display["x"]), int(display["y"]),
+                int(display["width"]), int(display["height"]), int(sender["fps"]), source,
+            )
+            # Enumerating audio endpoints opens PortAudio, so only check when
+            # something actually changed (reconcile runs twice per second).
+            if source and params != worker.params:
+                _device, error = audio.resolve_input(source)
+                if error:
+                    return self._fail(SENDER, error, errors)
+            self.sup.stop(SENDER)
+            worker.ensure(params)
+            return None
+
+        spec, error = self._sender_spec(sender, display)
+        self._apply(SENDER, spec, error, errors)
+        return None
+
+    def _reconcile_monitor(self, errors: dict[str, str]) -> None:
+        monitor = self.config.get("monitor", {})
+        source = monitor.get("omtSource", "")
+        if not source:
+            return self._fail(MONITOR, "Aucune source OMT à écouter.", errors)
+
+        worker = self._worker(MONITOR)
+        if worker is not None:
+            self.sup.stop(MONITOR)
+            worker.set_volume(monitor.get("volume", 100))
+            worker.ensure((source,))
+            return None
+
+        spec, error = self._monitor_spec(monitor, source)
+        self._apply(MONITOR, spec, error, errors)
+        return None
 
     def _apply(self, key: str, spec: ProcessSpec | None, error: str | None, errors: dict[str, str]) -> None:
         if error or spec is None:
@@ -312,13 +403,8 @@ class Engine:
         args = build_route_command(toolchain.ffmpeg, route, self.host_ip)
         return ProcessSpec(args, route["name"], progress="ffmpeg"), None
 
-    def _sender_spec(self) -> tuple[ProcessSpec | None, str | None]:
-        sender = self.config.get("sender", {})
-        if not sender.get("displayId"):
-            return None, "Aucun écran à émettre sélectionné."
-        display = self._display(sender["displayId"])
-        if display is None:
-            return None, "L'écran à émettre est absent ou débranché."
+    def _sender_spec(self, sender: dict, display: dict) -> tuple[ProcessSpec | None, str | None]:
+        """FFmpeg fallback for the sender, used when libomt cannot be loaded."""
         toolchain = self.tools.ffmpeg_for("omt")
         if toolchain is None:
             return None, NO_OMT_FFMPEG
@@ -336,11 +422,8 @@ class Engine:
         spec = ProcessSpec(args, "Émission OMT", progress="ffmpeg", graceful_quit=feeder is None, stdin_feeder=feeder)
         return spec, None
 
-    def _monitor_spec(self) -> tuple[ProcessSpec | None, str | None]:
-        monitor = self.config.get("monitor", {})
-        source = monitor.get("omtSource", "")
-        if not source:
-            return None, "Aucune source OMT à écouter."
+    def _monitor_spec(self, monitor: dict, source: str) -> tuple[ProcessSpec | None, str | None]:
+        """FFmpeg fallback for the audio return, used when libomt cannot be loaded."""
         toolchain = self.tools.player_for("omt")
         if toolchain is None:
             return None, NO_OMT_PLAYER

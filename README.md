@@ -56,15 +56,18 @@
     </td>
     <td valign="top">
       <h3>🎙️ Émission OMT avec le son</h3>
-      Publie un écran du poste en OMT, avec le son du PC ou n'importe quelle entrée audio : micro, carte son, câble virtuel, bus vMix.
+      Publie un écran du poste en OMT, avec le son du PC ou n'importe quelle entrée audio : micro, carte son, câble virtuel, bus vMix. Le son part dans le format natif d'OMT, sans conversion.
     </td>
   </tr>
   <tr>
     <td valign="top">
       <h3>🎧 Retour audio du master</h3>
-      Écoute le son d'une source OMT sur la sortie du poste, sans image ni fenêtre : le master de la régie reste à l'oreille sans mobiliser un écran.
+      Écoute le son d'une source OMT sur la sortie du poste, sans image ni fenêtre. Seules les trames audio sont demandées à la source : la vidéo ne traverse même pas le réseau.
     </td>
-    <td valign="top"></td>
+    <td valign="top">
+      <h3>⚡ OMT en direct</h3>
+      L'émission, le retour audio et la découverte parlent directement à <a href="https://github.com/openmediatransport/libomt">libomt</a>, sans passer par un processus FFmpeg.
+    </td>
   </tr>
 </table>
 

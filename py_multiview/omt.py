@@ -1,14 +1,25 @@
-"""Discovery of OMT sources advertised on the LAN (DNS-SD through libomt)."""
+"""Discovery of OMT sources advertised on the LAN (DNS-SD through libomt).
+
+libomt keeps the announced sources in memory, so ``omtlib.discover()`` is a
+plain function call. The FFmpeg route below is the fallback for when the
+library cannot be loaded: it costs a process launch and a few seconds, and
+only sees the sources announced during that window.
+"""
 
 from __future__ import annotations
 
 import re
 import subprocess
+import time
 from pathlib import Path
 
+from . import omtlib
 from .ffmpeg import creationflags
 
 _OMT_LINE_RE = re.compile(r"^\[libomt[^\]]*\]\s+(.*)$")
+
+# mDNS answers trickle in: give a just-started discovery a moment to fill up.
+_SETTLE_STEP = 0.25
 
 
 def parse_find_sources(output: str) -> tuple[list[str], bool]:
@@ -41,6 +52,28 @@ def parse_find_sources(output: str) -> tuple[list[str], bool]:
 
 def find_sources(ffmpeg: Path | None, timeout: float = 8.0) -> tuple[list[str], str | None]:
     """Return ``(sources, error)``; ``error`` is set when discovery itself failed."""
+    if omtlib.available():
+        return _find_sources_native(timeout), None
+    return _find_sources_ffmpeg(ffmpeg, timeout)
+
+
+def _find_sources_native(timeout: float) -> list[str]:
+    """Poll libomt's in-memory list until it stops growing."""
+    deadline = time.monotonic() + max(_SETTLE_STEP, min(timeout, 4.0))
+    sources: list[str] = []
+    while True:
+        found = omtlib.discover()
+        if len(found) > len(sources):
+            sources = found
+        elif sources:
+            break  # nothing new since last poll
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(_SETTLE_STEP)
+    return sources
+
+
+def _find_sources_ffmpeg(ffmpeg: Path | None, timeout: float) -> tuple[list[str], str | None]:
     if ffmpeg is None or not ffmpeg.exists():
         return [], "Aucun FFmpeg compatible OMT trouvé (bin/omt/)."
     args = [

@@ -7,6 +7,7 @@ programmes séparés, lancés comme processus indépendants.
 |---|---|---|---|
 | FFmpeg (build OMT) | `bin/omt/` | LGPL 2.1+ / GPL selon configuration | https://ffmpeg.org |
 | libomt, libomtnet, libvmx | `bin/omt/` | MIT | https://github.com/openmediatransport |
+| libomt (appelée directement par l'application via ctypes) | `bin/omt/libomt.dll` | MIT | https://github.com/openmediatransport/libomt |
 | SDL2 et dépendances MinGW (zlib, bzip2, liblzma, libiconv, winpthreads) | `bin/omt/` | zlib / BSD / LGPL / MIT | projets respectifs |
 | FFmpeg « essentials » de gyan.dev | `bin/standard/` | GPL v3 | https://www.gyan.dev/ffmpeg/builds/ — sources : https://github.com/FFmpeg/FFmpeg |
 | Qt 6 via PySide6 | bundle PyInstaller | LGPL v3 | https://www.qt.io / https://pypi.org/project/PySide6/ |

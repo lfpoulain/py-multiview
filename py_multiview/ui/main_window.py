@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio
+from .. import APP_NAME, __version__, audio, omtlib
 from ..config import OMT_PIXEL_FORMATS, default_config, default_stream, load_config, save_config
 from ..displays import describe, list_displays
 from ..engine import Engine
@@ -606,16 +606,19 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ sender
 
     def refresh_audio_devices(self) -> None:
-        """List DirectShow audio inputs off the UI thread (ffmpeg takes ~1 s)."""
-        toolchain = self.engine.tools.ffmpeg_for("omt")
-        ffmpeg = toolchain.ffmpeg if toolchain else None
-        threading.Thread(
-            target=lambda: self.audio_devices_ready.emit(audio.list_dshow_audio(ffmpeg)), daemon=True
-        ).start()
+        """List the audio inputs off the UI thread (enumeration can take ~1 s)."""
+        if omtlib.available():
+            work = lambda: [d.name for d in audio.list_input_devices()]  # noqa: E731
+        else:
+            toolchain = self.engine.tools.ffmpeg_for("omt")
+            ffmpeg = toolchain.ffmpeg if toolchain else None
+            work = lambda: audio.list_dshow_audio(ffmpeg)  # noqa: E731
+        threading.Thread(target=lambda: self.audio_devices_ready.emit(work()), daemon=True).start()
 
     def _fill_audio_sources(self, devices: list) -> None:
         self._audio_devices = list(devices)
         selected = self.config["sender"].get("audioSource", "")
+        prefix = audio.INPUT_PREFIX if omtlib.available() else audio.DSHOW_PREFIX
         combo = self.sender_audio
         combo.blockSignals(True)
         combo.clear()
@@ -624,9 +627,16 @@ class MainWindow(QMainWindow):
         if devices:
             combo.insertSeparator(combo.count())
         for name in devices:
-            combo.addItem(name, audio.DSHOW_PREFIX + name)
+            combo.addItem(name, prefix + name)
         if selected and combo.findData(selected) < 0:
-            combo.addItem(f"⚠ {selected.removeprefix(audio.DSHOW_PREFIX)} (absent)", selected)
+            # A device saved under the other prefix names the same hardware.
+            bare = selected.split(":", 1)[-1] if ":" in selected else selected
+            twin = combo.findData(prefix + bare)
+            if twin >= 0:
+                combo.setCurrentIndex(twin)
+                combo.blockSignals(False)
+                return
+            combo.addItem(f"⚠ {bare} (absent)", selected)
         combo.setCurrentIndex(max(0, combo.findData(selected)))
         combo.blockSignals(False)
 
@@ -671,6 +681,13 @@ class MainWindow(QMainWindow):
 
     def load_sender_fields(self) -> None:
         sender = self.config["sender"]
+        if omtlib.available():
+            # libomt captures in BGRA and encodes itself; these two only drive
+            # the FFmpeg fallback.
+            note = "Réglage propre à l'émission FFmpeg : libomt encode lui-même l'image."
+            for widget in (self.sender_format, self.sender_clock):
+                widget.setEnabled(False)
+                widget.setToolTip(note)
         widgets = (self.sender_name, self.sender_fps, self.sender_format, self.sender_clock)
         for w in widgets:
             w.blockSignals(True)
@@ -826,8 +843,16 @@ class MainWindow(QMainWindow):
         tools = self.engine.tools
         srt = tools.player_for("srt") is not None
         omt_ok = tools.player_for("omt") is not None and tools.ffmpeg_for("omt") is not None
-        self.engine_label.setText(f"FFmpeg  ·  SRT {'✓' if srt else '✗'}  ·  OMT {'✓' if omt_ok else '✗'}")
-        self.engine_label.setToolTip("\n".join(tc.describe() for tc in tools.toolchains) or "Aucun FFmpeg trouvé")
+        native_omt = omtlib.available()
+        omt_text = "OMT natif ✓" if native_omt else f"OMT {'✓' if omt_ok else '✗'}"
+        self.engine_label.setText(f"FFmpeg  ·  SRT {'✓' if srt else '✗'}  ·  {omt_text}")
+        tips = [tc.describe() for tc in tools.toolchains] or ["Aucun FFmpeg trouvé"]
+        tips.append(
+            "libomt : émission et retour audio en direct"
+            if native_omt
+            else f"libomt indisponible, repli sur FFmpeg ({omtlib.load_error() or 'raison inconnue'})"
+        )
+        self.engine_label.setToolTip("\n".join(tips))
         if not srt:
             self.notify("⚠ Aucun FFmpeg avec SRT : la réception SRT et le routage sont indisponibles (voir Préférences).", 0)
 

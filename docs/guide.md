@@ -106,17 +106,19 @@ Dans le panneau **Émission OMT** :
 | **Audio** | **Sans son**, **Son du PC** (tout ce que joue la sortie audio par défaut de Windows) ou une **entrée** de la liste : micro, carte son, câble virtuel (VB-Audio…), bus vMix Audio. ↻ actualise la liste. |
 | **Horloge de sortie** | Cadence la sortie sur l'horloge OMT plutôt que sur la capture. |
 
-L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
+L'audio part dans le format natif d'OMT, sans conversion ni rééchantillonnage. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
+
+**Format** et **Horloge de sortie** sont grisés quand l'émission passe en direct par libomt, ce qui est le cas normal : la bibliothèque encode l'image elle-même. Ils ne servent qu'au repli FFmpeg, signalé par `OMT` au lieu de `OMT natif` dans la barre d'état.
 
 ## Écouter le retour du master
 
-Le panneau **Retour audio OMT** lit le son d'une source OMT sur la sortie audio du poste, **sans ouvrir de fenêtre et sans décoder l'image** : de quoi garder le master de la régie à l'oreille pendant qu'on travaille, sans mobiliser un écran.
+Le panneau **Retour audio OMT** lit le son d'une source OMT sur la sortie audio du poste, **sans ouvrir de fenêtre et sans recevoir l'image** : l'application ne demande à la source que ses trames audio, donc la vidéo ne traverse même pas le réseau. De quoi garder le master de la régie à l'oreille pendant qu'on travaille, sans mobiliser un écran ni de bande passante.
 
 1. Saisir le nom de la source, ou cliquer sur 🔍 pour la choisir parmi celles découvertes sur le réseau.
 2. Régler le **Volume** (0 à 100 %).
 3. Cliquer sur **Écouter**.
 
-Le volume et la source se changent en cours d'écoute : le retour redémarre aussitôt. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
+Le volume se règle sans interrompre le son ; changer de source relance l'écoute. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
 
 ## Préférences
 

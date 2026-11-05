@@ -48,9 +48,46 @@ class FakeSupervisor:
         return ProcessInfo(Status.ACTIVE if key in self.running else Status.STOPPED)
 
 
-def make_engine(config, **tools):
-    engine = Engine(FakeTools(**tools), FakeSupervisor())
+class FakeWorker:
+    """Stands in for a libomt worker: records what the engine asks of it."""
+
+    def __init__(self, key):
+        self.key = key
+        self.params = None
+        self.volume = None
+        self.running = False
+        self.log = []
+
+    def ensure(self, params):
+        self.params = params
+        self.running = True
+
+    def set_volume(self, percent):
+        self.volume = percent
+
+    def stop(self):
+        self.running = False
+
+    def alive(self):
+        return self.running
+
+    def info(self):
+        return ProcessInfo(Status.ACTIVE if self.running else Status.STOPPED)
+
+
+def make_engine(config, native=False, **tools):
+    """``native=True`` exercises the libomt path, otherwise the FFmpeg fallback."""
+    workers: dict[str, FakeWorker] = {}
+
+    def factory(key):
+        if not native:
+            return None
+        workers[key] = FakeWorker(key)
+        return workers[key]
+
+    engine = Engine(FakeTools(**tools), FakeSupervisor(), worker_factory=factory)
     engine.host_ip = "10.0.0.5"
+    engine.fake_workers = workers
     engine.update(normalize_config({"displayIdSchemaVersion": 2, **config}), DISPLAYS)
     return engine
 
@@ -168,3 +205,37 @@ def test_audio_monitor_follows_volume_and_stops():
     assert args[args.index("-volume") + 1] == "40"
     engine.stop_monitor()
     assert "monitor" not in engine.sup.running
+
+
+def test_native_monitor_is_preferred_over_ffplay():
+    engine = make_engine({"monitor": {"omtSource": "RÉGIE (Master)", "volume": 40}}, native=True)
+    assert engine.start_monitor() is None
+    worker = engine.fake_workers["monitor"]
+    assert worker.params == ("RÉGIE (Master)",)
+    assert worker.volume == 40
+    assert "monitor" not in engine.sup.running  # no ffplay alongside it
+    # Volume is applied live: it must not restart the receiver.
+    engine.config["monitor"]["volume"] = 70
+    engine.reconcile()
+    assert worker.volume == 70 and worker.params == ("RÉGIE (Master)",)
+    engine.stop_monitor()
+    assert not worker.running
+
+
+def test_native_sender_publishes_the_screen_geometry():
+    engine = make_engine(
+        {"sender": {"displayId": "side", "name": "Régie", "fps": 50}}, native=True
+    )
+    assert engine.start_sender() is None
+    worker = engine.fake_workers["sender"]
+    assert worker.params == ("Régie", 1920, 0, 1920, 1080, 50, "")
+    assert "sender" not in engine.sup.running
+
+
+def test_native_sender_reports_a_missing_audio_input():
+    engine = make_engine(
+        {"sender": {"displayId": "side", "audioSource": "dshow:Absent"}}, native=True
+    )
+    error = engine.start_sender()
+    assert error and "Absent" in error
+    assert not engine.fake_workers["sender"].running
