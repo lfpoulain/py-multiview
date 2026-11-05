@@ -1,11 +1,11 @@
-﻿"""Audio sources for the OMT sender.
+"""Audio sources for the OMT sender.
 
 Two kinds of sources, named in the configuration as:
 
-* ``loopback`` â€” what the PC is playing (WASAPI loopback of the default
+* ``loopback`` — what the PC is playing (WASAPI loopback of the default
   output, through PyAudioWPatch);
-* ``in:<name>`` â€” a capture endpoint: microphone, sound card, virtual cable,
-  vMix Audioâ€¦ (``dshow:<name>``, written by older versions, names the same
+* ``in:<name>`` — a capture endpoint: microphone, sound card, virtual cable,
+  vMix Audio… (``dshow:<name>``, written by older versions, names the same
   hardware and is matched by name).
 
 Which half of this module is used depends on the sender:
@@ -55,7 +55,7 @@ def list_dshow_audio(ffmpeg: Path | None) -> list[str]:
             creationflags=creationflags(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log.warning("Liste des entrÃ©es audio impossible: %s", exc)
+        log.warning("Liste des entrées audio impossible: %s", exc)
         return []
     return parse_dshow_audio(proc.stdout.decode("utf-8", errors="replace"))
 
@@ -96,7 +96,7 @@ def pyaudio_module():
 
 
 def list_input_devices() -> list[InputDevice]:
-    """WASAPI capture endpoints: microphones, line inputs, virtual cablesâ€¦
+    """WASAPI capture endpoints: microphones, line inputs, virtual cables…
 
     Loopback endpoints are left out; the PC's own sound has its own entry.
     """
@@ -124,7 +124,7 @@ def list_input_devices() -> list[InputDevice]:
                 )
             )
     except Exception:
-        log.exception("Ã‰numÃ©ration des entrÃ©es audio impossible")
+        log.exception("Énumération des entrées audio impossible")
     finally:
         p.terminate()
     return devices
@@ -142,7 +142,7 @@ def resolve_input(source: str) -> tuple[InputDevice | None, str | None]:
     if source == LOOPBACK:
         device = loopback_device()
         if device is None:
-            return None, "Capture du son du PC indisponible (aucune sortie audio par dÃ©faut)."
+            return None, "Capture du son du PC indisponible (aucune sortie audio par défaut)."
         return InputDevice(device.index, device.name, device.rate, device.channels, loopback=True), None
 
     wanted = source.split(":", 1)[1] if ":" in source else source
@@ -155,7 +155,7 @@ def resolve_input(source: str) -> tuple[InputDevice | None, str | None]:
         found = next((d for d in devices if match(d)), None)
         if found is not None:
             return found, None
-    return None, f"EntrÃ©e audio Â« {wanted} Â» introuvable."
+    return None, f"Entrée audio « {wanted} » introuvable."
 
 
 def loopback_device() -> LoopbackDevice | None:
@@ -174,7 +174,7 @@ def loopback_device() -> LoopbackDevice | None:
                     int(dev["index"]), str(speakers["name"]), int(dev["defaultSampleRate"]), int(dev["maxInputChannels"])
                 )
     except Exception:
-        log.exception("PÃ©riphÃ©rique loopback WASAPI introuvable")
+        log.exception("Périphérique loopback WASAPI introuvable")
     finally:
         p.terminate()
     return None
@@ -243,7 +243,7 @@ class LoopbackFeeder:
     clock only decides *when to invent silence*, never how much real audio to
     hand over. Pacing the pipe on the wall clock instead would make every late
     callback inject silence, pile up the samples that arrive just after, and
-    end up discarding them at the buffer cap â€” a click each time.
+    end up discarding them at the buffer cap — a click each time.
     """
 
     CHUNK = 0.01  # seconds
