@@ -26,6 +26,8 @@ DEFAULT_LATENCY_MS = 120
 DEFAULT_SENDER_NAME = "py-multiview"
 DEFAULT_MULTICAST_ADDR = "239.10.10.10"
 DEFAULT_MULTICAST_PORT = 1234
+# Local control API. 5080 is py-intercom's, so stay next door without clashing.
+DEFAULT_API_PORT = 5090
 
 # Legacy decode values (ffmpeg -hwaccel names) -> current decoder family.
 _LEGACY_DECODERS = {
@@ -213,6 +215,13 @@ def normalize_config(config) -> dict:
 
     monitor = config.get("monitor")
     config["monitor"] = normalize_monitor(monitor if isinstance(monitor, dict) else {})
+
+    api = config.get("api")
+    api = dict(api) if isinstance(api, dict) else {}
+    api["enabled"] = bool(api.get("enabled", False))
+    api["port"] = _int(api.get("port"), DEFAULT_API_PORT, 1, 65535)
+    api["localOnly"] = bool(api.get("localOnly", False))
+    config["api"] = api
 
     receiver = config.get("receiver")
     receiver = dict(receiver) if isinstance(receiver, dict) else {}

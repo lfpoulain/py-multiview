@@ -27,7 +27,10 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, audio, omtlib
+from ..api import ApiServer
+from ..api import dispatch as api_dispatch
 from ..config import OMT_PIXEL_FORMATS, default_config, default_stream, load_config, save_config
+from ..control import Control
 from ..displays import describe, list_displays
 from ..engine import Engine
 from ..paths import APP_ICON_PNG_PATH
@@ -50,6 +53,7 @@ PIXEL_FORMAT_LABELS = {
 
 class MainWindow(QMainWindow):
     audio_devices_ready = Signal(list)
+    api_call = Signal(object)
 
     def __init__(self, engine: Engine | None = None) -> None:
         super().__init__()
@@ -90,6 +94,13 @@ class MainWindow(QMainWindow):
 
         self.audio_devices_ready.connect(self._fill_audio_sources)
         self.refresh_audio_devices()
+
+        # The API answers on its own threads but never touches the engine from
+        # them: each request is executed here, on the UI thread.
+        self.control = Control(self)
+        self.api = ApiServer(self._run_api_request)
+        self.api_call.connect(self._run_api_job)
+        self.refresh_api()
 
         QShortcut(QKeySequence.New, self, activated=self.add_stream)
         QTimer.singleShot(300, self.autostart)
@@ -842,6 +853,48 @@ class MainWindow(QMainWindow):
                 self.notify(f"⚠ Retour audio : {error}", 8000)
         self.on_tick()
 
+    # ------------------------------------------------------- local API
+
+    def refresh_api(self) -> None:
+        """Apply the API settings: start, move, or stop the server."""
+        settings = self.config.get("api", {})
+        if not settings.get("enabled"):
+            self.api.stop()
+            return
+        host = "127.0.0.1" if settings.get("localOnly") else "0.0.0.0"  # noqa: S104
+        error = self.api.start(host, settings.get("port", 5090))
+        if error:
+            self.notify(f"⚠ API locale : {error}", 10000)
+
+    def api_url(self) -> str:
+        if not self.api.running:
+            return ""
+        host = "127.0.0.1" if self.api.host.startswith("127.") else self.host_ip
+        return f"http://{host}:{self.api.port}"
+
+    def _run_api_request(self, method: str, path: str):
+        """Called from an HTTP thread: run the route on the UI thread."""
+        done = threading.Event()
+        box: dict = {}
+
+        def job() -> None:
+            try:
+                box["result"] = api_dispatch(method, path, self.control)
+            except Exception as exc:  # noqa: BLE001 - reported to the caller
+                box["error"] = exc
+            finally:
+                done.set()
+
+        self.api_call.emit(job)
+        if not done.wait(timeout=10.0):
+            return 503, {"error": {"code": "BUSY", "message": "py-multiview n'a pas répondu à temps"}}
+        if "error" in box:
+            raise box["error"]
+        return box["result"]
+
+    def _run_api_job(self, job) -> None:
+        job()
+
     # ------------------------------------------------------------ routes
 
     def open_routes(self) -> None:
@@ -957,6 +1010,7 @@ class MainWindow(QMainWindow):
 
     def on_preferences_changed(self) -> None:
         self.refresh_displays(force=True)
+        self.refresh_api()
         self.commit()
 
     def reset_configuration(self) -> bool:
@@ -1001,5 +1055,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.commit()
+        self.api.stop()
         self.engine.shutdown()
         event.accept()

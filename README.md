@@ -69,6 +69,13 @@
       L'émission, le retour audio et la découverte parlent directement à <a href="https://github.com/openmediatransport/libomt">libomt</a>, sans passer par un processus FFmpeg.
     </td>
   </tr>
+  <tr>
+    <td valign="top">
+      <h3>🎛️ Pilotage depuis un pupitre</h3>
+      Une API HTTP locale pour <a href="https://github.com/lfpoulain/py-livedeck">py-livedeck</a>, Companion ou la domotique : flux, émission, retour audio, routes. Voir <a href="docs/api.md">l'API</a>.
+    </td>
+    <td valign="top"></td>
+  </tr>
 </table>
 
 ## Télécharger

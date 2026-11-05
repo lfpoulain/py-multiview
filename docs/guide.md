@@ -9,6 +9,7 @@
 - [Un flux sur plusieurs écrans : le routage multicast](#un-flux-sur-plusieurs-écrans--le-routage-multicast)
 - [Émettre un écran en OMT](#émettre-un-écran-en-omt)
 - [Écouter le retour du master](#écouter-le-retour-du-master)
+- [Piloter depuis un pupitre](#piloter-depuis-un-pupitre)
 - [Préférences](#préférences)
 - [Réseau et pare-feu](#réseau-et-pare-feu)
 - [Dépannage](#dépannage)
@@ -133,6 +134,18 @@ Sous les réglages d'écoute, **Fenêtre flottante** ouvre une petite fenêtre v
 
 La fenêtre se déplace à la souris. Fermer la fenêtre depuis l'application ou la croix revient au même. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
 
+## Piloter depuis un pupitre
+
+**Préférences → Pilotage à distance** ouvre une API HTTP sur le réseau local : py-livedeck, Companion, un boîtier domotique ou un simple `curl` peuvent alors démarrer un flux, lancer l'émission, régler le retour audio ou ouvrir la fenêtre flottante.
+
+Cocher *Ouvrir l'API locale*, décocher *Ce poste uniquement* pour y accéder depuis une autre machine. L'adresse à recopier dans le pupitre est affichée juste en dessous.
+
+Exemple de bouton py-livedeck, action **Requête HTTP / curl** : méthode `POST`, URL `http://<ip-du-poste>:5090/sender/toggle`, corps vide.
+
+Les routes complètes, le format des réponses et les codes d'erreur sont dans [l'API de pilotage local](api.md).
+
+L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-livedeck : à n'ouvrir que sur un réseau de confiance. Elle est fermée par défaut.
+
 ## Préférences
 
 | Réglage | |
@@ -140,6 +153,7 @@ La fenêtre se déplace à la souris. Fermer la fenêtre depuis l'application ou
 | **Ne jamais afficher de flux sur l'écran principal** | Réserve l'écran de travail : il n'est pas proposé dans les cartes ni utilisé par Auto-assigner. |
 | **Décodage vidéo** | Processeur (recommandé, tous codecs), ou GPU NVIDIA / Intel / AMD pour soulager le processeur avec beaucoup de flux **H.264**. Seuls les décodeurs disponibles sur le poste sont proposés. |
 | **Émettre en direct par libomt** | Coché par défaut. Décoché, l'écran est capturé et publié par FFmpeg (gdigrab) comme avant la 0.3.4. À essayer si l'image reçue est noire ou figée. |
+| **Pilotage à distance** | Ouvre l'API HTTP locale, son port, et la restriction à ce poste. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
 | **Moteur FFmpeg** | Diagnostic des builds FFmpeg détectés et de leurs capacités. |
 | **Fichiers** | Accès aux dossiers de configuration et de journaux ; **Réinitialiser** efface toute la configuration. |

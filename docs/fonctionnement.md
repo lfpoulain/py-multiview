@@ -98,6 +98,12 @@ Le récepteur audio ne demande que `OMTFrameType_Audio`, donc la connexion vidé
 
 Le repli FFmpeg est un `ffplay -nodisp -vn`, qui jette les trames vidéo dès le démultiplexage. C'est aussi pourquoi la réception *avec* image reçoit `-infbuf` : OMT transporte la vidéo compressée en VMX1, mais ffplay met en file les trames **décodées**, soit ~4 Mo en 1080p et ~16 Mo en 2160p, alors qu'il plafonne l'ensemble de ses files de paquets à 15 Mo. Sans cela le thread de lecture se met en pause à chaque trame et la file audio se vide.
 
+## API de pilotage
+
+L'API (`api.py`) est un `ThreadingHTTPServer` de la bibliothèque standard : aucune dépendance ajoutée. Son routage est une fonction pure, donc testable sans ouvrir de socket, et les commandes (`control.py`) **ne s'exécutent jamais sur le fil HTTP** : chaque requête est postée à l'interface par un signal Qt en connexion différée, qui possède le moteur, puis attend le résultat. Le moteur n'est ainsi jamais manipulé par deux fils à la fois.
+
+Le contrat suit celui des services que py-livedeck pilote déjà — `GET /status` renvoyant tout l'état avec une clé `connected`, commandes `POST /<objet>/<id>/<verbe>` à corps vide, réponse qui réémet l'état. Les détails sont dans [l'API de pilotage local](api.md).
+
 ## Routage multicast
 
 Une route est un `ffmpeg` qui écoute en SRT et recopie le flux en MPEG-TS vers un groupe multicast (`-c copy`, en-têtes réémis pour les lecteurs qui arrivent en cours de route). L'émission et l'abonnement au groupe sont liés à la même interface réseau (`localaddr`), pour éviter que Windows choisisse une carte VPN ou Hyper-V différente de chaque côté.
@@ -114,6 +120,8 @@ py_multiview/
 ├── engine.py       moteur à état désiré
 ├── process.py      superviseur : relance, détection du signal, Job Object
 ├── ffmpeg.py       détection des builds FFmpeg, construction des commandes
+├── api.py          routage HTTP de l'API de pilotage local
+├── control.py      actions exposées par l'API, exécutées sur le fil de l'interface
 ├── omtlib.py       liaison ctypes vers libomt (découverte, réception, émission)
 ├── native.py       émission et retour audio en direct sur libomt
 ├── capture.py      capture d'écran GDI en BGRA

@@ -488,6 +488,33 @@ class PreferencesDialog(QDialog):
         )
         layout.addWidget(emission)
 
+        api = Section("Pilotage à distance")
+        self.api_enabled = QCheckBox("Ouvrir l'API locale (py-livedeck, Companion, domotique…)")
+        self.api_enabled.setChecked(config["api"]["enabled"])
+        api.body.addWidget(self.api_enabled)
+        api_row = QHBoxLayout()
+        api_row.addWidget(field_label("Port"))
+        self.api_port = spin(1, 65535, config["api"]["port"], width=96)
+        api_row.addWidget(self.api_port)
+        self.api_local = QCheckBox("Ce poste uniquement")
+        self.api_local.setChecked(config["api"]["localOnly"])
+        self.api_local.setToolTip("Décoché, l'API est joignable depuis le réseau local.")
+        api_row.addWidget(self.api_local)
+        api_row.addStretch(1)
+        api.body.addLayout(api_row)
+        self.api_hint = label("", "Mono", wrap=True)
+        self.api_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        api.body.addWidget(self.api_hint)
+        api.body.addWidget(
+            label("Sans mot de passe, comme les autres services pilotés par py-livedeck : "
+                  "à n'ouvrir que sur un réseau de confiance.", "Muted", wrap=True)
+        )
+        self.api_enabled.stateChanged.connect(self._refresh_api_hint)
+        self.api_port.valueChanged.connect(self._refresh_api_hint)
+        self.api_local.stateChanged.connect(self._refresh_api_hint)
+        self._refresh_api_hint()
+        layout.addWidget(api)
+
         startup = Section("Au lancement")
         self.auto_rx = QCheckBox("Démarrer automatiquement la réception")
         self.auto_rx.setChecked(config["autoStartReceiver"])
@@ -552,6 +579,14 @@ class PreferencesDialog(QDialog):
         self._fill_diag()
         self.main.refresh_engine_summary()
 
+    def _refresh_api_hint(self) -> None:
+        if not self.api_enabled.isChecked():
+            self.api_hint.setText("API fermée.")
+            return
+        host = "127.0.0.1" if self.api_local.isChecked() else (self.main.host_ip or "127.0.0.1")
+        base = f"http://{host}:{self.api_port.value()}"
+        self.api_hint.setText(f"{base}/status\nPOST {base}/sender/toggle")
+
     def _reset(self) -> None:
         if self.main.reset_configuration():
             self.reject()
@@ -561,6 +596,9 @@ class PreferencesDialog(QDialog):
         config["excludePrimaryDisplay"] = self.exclude_primary.isChecked()
         config["receiver"]["decode"] = self.decode.currentData()
         config["sender"]["native"] = self.sender_native.isChecked()
+        config["api"]["enabled"] = self.api_enabled.isChecked()
+        config["api"]["port"] = self.api_port.value()
+        config["api"]["localOnly"] = self.api_local.isChecked()
         config["autoStartReceiver"] = self.auto_rx.isChecked()
         config["autoStartSender"] = self.auto_tx.isChecked()
         self.main.on_preferences_changed()
