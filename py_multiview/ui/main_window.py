@@ -111,12 +111,11 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)  # the header runs edge to edge
-        outer.setSpacing(0)
+        outer.setContentsMargins(16, 16, 16, 12)
+        outer.setSpacing(14)
         outer.addWidget(self._build_header())
 
         body = QHBoxLayout()
-        body.setContentsMargins(14, 14, 14, 12)
         body.setSpacing(14)
         body.addWidget(self._build_sidebar())
         body.addWidget(self._build_streams_panel(), 1)
@@ -138,39 +137,30 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName("Header")
         row = QHBoxLayout(header)
-        row.setContentsMargins(20, 10, 16, 10)
-        row.setSpacing(10)
+        row.setContentsMargins(18, 12, 14, 12)
+        row.setSpacing(12)
 
         logo = QLabel()
         if APP_ICON_PNG_PATH.exists():
             pm = QPixmap(str(APP_ICON_PNG_PATH))
             if not pm.isNull():
-                logo.setPixmap(pm.scaled(28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                logo.setPixmap(pm.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         row.addWidget(logo)
 
-        # Brand in two tones, like LiveDeck: "py-multi" + accented "view".
-        brand = QHBoxLayout()
-        brand.setSpacing(0)
-        head, _, tail = APP_NAME.rpartition("view")
-        brand.addWidget(label(head or APP_NAME, "Brand"))
-        if tail == "" and head:
-            brand.addWidget(label("view", "BrandAccent"))
-        row.addLayout(brand)
-
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        titles.addWidget(label(APP_NAME, "AppTitle"))
         ip = self.host_ip or "IP inconnue"
-        self.subtitle = label(f"v{__version__}  ·  {ip}", "Hint")
+        self.subtitle = label(f"Version {__version__}  ·  Ce poste : {ip}", "Muted")
         self.subtitle.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.subtitle.setToolTip("Version de l'application et adresse IP de ce poste")
-        row.addSpacing(6)
-        row.addWidget(self.subtitle)
+        titles.addWidget(self.subtitle)
+        row.addLayout(titles)
         row.addStretch(1)
 
-        # Hidden until the first tick fills them: an empty chip is a blank blob.
         self.streams_chip = label("", "Chip")
         self.sender_chip = label("", "Chip")
-        for chip in (self.streams_chip, self.sender_chip):
-            chip.hide()
-            row.addWidget(chip)
+        row.addWidget(self.streams_chip)
+        row.addWidget(self.sender_chip)
         row.addSpacing(6)
 
         prefs = button("Préférences", variant="ghost", icon="settings", icon_color=theme.TEXT_DIM)
@@ -968,9 +958,8 @@ class MainWindow(QMainWindow):
             active += info.status == Status.ACTIVE
 
         total = len(self.config["streams"])
-        self.streams_chip.setText(f"●  Flux en direct  {active}/{total}")
+        self.streams_chip.setText(f"Flux en direct  {active}/{total}")
         set_state(self.streams_chip, "active" if active else "stopped")
-        self.streams_chip.show()
 
         if self.engine.reception_running:
             set_button(self.reception_btn, "Arrêter la réception", "danger", "stop")
@@ -979,9 +968,8 @@ class MainWindow(QMainWindow):
 
         sender = self.engine.sender_info()
         self.sender_pill.set_status(sender.status, "Émission" if sender.status == Status.ACTIVE else None)
-        self.sender_chip.setText("●  OMT  en émission" if sender.status == Status.ACTIVE else "●  OMT  arrêté")
+        self.sender_chip.setText("OMT  en émission" if sender.status == Status.ACTIVE else "OMT  arrêté")
         set_state(self.sender_chip, "active" if sender.status == Status.ACTIVE else "stopped")
-        self.sender_chip.show()
         set_state(self.sender_detail, sender.status.value)
         self.sender_detail.setText(sender.detail)
         self.sender_detail.setVisible(bool(sender.detail))
