@@ -8,6 +8,7 @@
 - [Recevoir une source OMT](#recevoir-une-source-omt)
 - [Un flux sur plusieurs écrans : le routage multicast](#un-flux-sur-plusieurs-écrans--le-routage-multicast)
 - [Émettre un écran en OMT](#émettre-un-écran-en-omt)
+- [Écouter le retour du master](#écouter-le-retour-du-master)
 - [Préférences](#préférences)
 - [Réseau et pare-feu](#réseau-et-pare-feu)
 - [Dépannage](#dépannage)
@@ -29,6 +30,7 @@ Tout est inclus, FFmpeg compris. Une seule instance peut tourner à la fois : re
 | **En-tête** | Version, adresse IP du poste (celle à donner à la régie), nombre de flux en direct, état de l'émission OMT, bouton **Démarrer / Arrêter la réception**. |
 | **Écrans** | Écrans détectés avec leur résolution. Double-clic pour renommer. **Identifier** affiche le nom de chaque écran en grand sur l'écran lui-même. **Auto-assigner** donne un écran libre à chaque flux et crée les flux manquants. |
 | **Émission OMT** | Publication d'un écran du poste sur le réseau. |
+| **Retour audio OMT** | Écoute du son d'une source OMT sur ce poste, sans image. |
 | **Routage multicast** | État des routes ; **Gérer** ouvre leur configuration. |
 | **Flux entrants** | Une carte par flux : aperçu, état, source, écran et options d'affichage. |
 | **Barre d'état** | Messages, et état des builds FFmpeg (clic pour le diagnostic). |
@@ -106,6 +108,16 @@ Dans le panneau **Émission OMT** :
 
 L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
 
+## Écouter le retour du master
+
+Le panneau **Retour audio OMT** lit le son d'une source OMT sur la sortie audio du poste, **sans ouvrir de fenêtre et sans décoder l'image** : de quoi garder le master de la régie à l'oreille pendant qu'on travaille, sans mobiliser un écran.
+
+1. Saisir le nom de la source, ou cliquer sur 🔍 pour la choisir parmi celles découvertes sur le réseau.
+2. Régler le **Volume** (0 à 100 %).
+3. Cliquer sur **Écouter**.
+
+Le volume et la source se changent en cours d'écoute : le retour redémarre aussitôt. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
+
 ## Préférences
 
 | Réglage | |
@@ -139,6 +151,7 @@ L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission 
 | Image saccadée avec beaucoup de flux | Essayer le décodage GPU (flux H.264) et le mode **Adapter**, qui ne coûte rien au processeur. |
 | Source OMT introuvable | Même réseau / VLAN, mDNS autorisé, TCP 6400-6600 ouverts des deux côtés. |
 | Pas de son dans l'émission | Vérifier la source **Audio** ; avec *Son du PC*, le son doit sortir sur la sortie audio par défaut de Windows. |
+| Retour audio muet | La source OMT porte-t-elle bien de l'audio ? Vérifier le **Volume** et la sortie audio par défaut de Windows. Le journal du panneau liste les flux reçus. |
 | *Aucun ffplay avec support SRT* | Uniquement en lançant depuis les sources sans `bin/standard` : voir [Développement](developpement.md). |
 
 ## Fichiers

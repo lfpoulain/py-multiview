@@ -47,6 +47,16 @@ def test_player_command_layout():
     for flag in ("-autoexit", "-fs", "-an", "-stats"):
         assert flag in args
     assert "-vf" not in args
+    assert "-infbuf" not in args
+
+
+def test_player_command_unthrottles_raw_omt_video():
+    args = build_player_command(
+        Path("ffplay"), input_args=["-f", "libomt", "-i", "SRC"], display=DISPLAY, raw_video=True
+    )
+    # Uncompressed frames overflow ffplay's packet queue and starve the audio.
+    assert "-infbuf" in args and "-framedrop" in args
+    assert args[args.index("-sync") + 1] == "audio"
 
 
 def test_route_command():

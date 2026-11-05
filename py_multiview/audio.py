@@ -101,9 +101,17 @@ def loopback_device() -> LoopbackDevice | None:
 
 
 class LoopbackFeeder:
-    """Streams the PC's audio as s16le PCM to a writable pipe, in real time."""
+    """Streams the PC's audio as s16le PCM to a writable pipe, in real time.
+
+    Captured samples are forwarded as soon as WASAPI delivers them: the wall
+    clock only decides *when to invent silence*, never how much real audio to
+    hand over. Pacing the pipe on the wall clock instead would make every late
+    callback inject silence, pile up the samples that arrive just after, and
+    end up discarding them at the buffer cap — a click each time.
+    """
 
     CHUNK = 0.01  # seconds
+    CUSHION = 0.06  # seconds of play-out kept in hand before padding a gap
 
     def __init__(self, device: LoopbackDevice) -> None:
         self.device = device
@@ -129,17 +137,13 @@ class LoopbackFeeder:
                 self._buffered -= len(self._buffer.popleft())
         return None, _pyaudio().paContinue
 
-    def _take(self, size: int) -> bytes:
-        out = bytearray()
+    def _drain(self) -> bytes:
+        """Everything captured so far, without padding."""
         with self._lock:
-            while self._buffer and len(out) < size:
-                chunk = self._buffer.popleft()
-                need = size - len(out)
-                out += chunk[:need]
-                if len(chunk) > need:
-                    self._buffer.appendleft(chunk[need:])
-            self._buffered -= len(out)
-        return bytes(out) + b"\x00" * (size - len(out))
+            out = b"".join(self._buffer)
+            self._buffer.clear()
+            self._buffered = 0
+        return out
 
     def _run(self, pipe) -> None:
         pa = _pyaudio()
@@ -156,13 +160,24 @@ class LoopbackFeeder:
                 stream_callback=self._on_audio,
             )
             start = time.perf_counter()
-            written = 0  # frames
+            cushion = int(self.device.rate * self.CUSHION)
+            written = 0  # frames handed to ffmpeg
             while not self._stop.is_set():
-                due = int((time.perf_counter() - start) * self.device.rate)
-                if due > written:
-                    pipe.write(self._take((due - written) * self.frame_bytes))
+                data = self._drain()
+                if data:
+                    pipe.write(data)
                     pipe.flush()
-                    written = due
+                    written += len(data) // self.frame_bytes
+                else:
+                    # WASAPI loopback stays silent while the PC plays nothing:
+                    # keep ffmpeg fed, but leave a cushion so the samples that
+                    # resume right after are not pushed back by our own silence.
+                    due = int((time.perf_counter() - start) * self.device.rate)
+                    gap = due - written - cushion
+                    if gap > 0:
+                        pipe.write(b"\x00" * (gap * self.frame_bytes))
+                        pipe.flush()
+                        written += gap
                 time.sleep(self.CHUNK / 2)
         except (BrokenPipeError, OSError, ValueError):
             pass  # ffmpeg exited

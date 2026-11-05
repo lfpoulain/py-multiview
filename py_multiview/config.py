@@ -137,6 +137,14 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
     return sender
 
 
+def normalize_monitor(raw: dict) -> dict:
+    """Audio-only OMT listening: the master return heard on this PC."""
+    monitor = dict(raw)
+    monitor["omtSource"] = _str(monitor.get("omtSource"))
+    monitor["volume"] = _int(monitor.get("volume"), 100, 0, 100)
+    return monitor
+
+
 def normalize_config(config) -> dict:
     """Return a fully-populated, type-safe copy of ``config``.
 
@@ -192,6 +200,9 @@ def normalize_config(config) -> dict:
 
     sender = config.get("sender")
     config["sender"] = normalize_sender(sender if isinstance(sender, dict) else {}, reset_displays)
+
+    monitor = config.get("monitor")
+    config["monitor"] = normalize_monitor(monitor if isinstance(monitor, dict) else {})
 
     receiver = config.get("receiver")
     receiver = dict(receiver) if isinstance(receiver, dict) else {}

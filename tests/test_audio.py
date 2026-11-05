@@ -40,3 +40,10 @@ def test_sender_with_loopback_reads_stdin():
 def test_sender_with_dshow_device():
     args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], dshow_audio_input_args("Micro (USB)"))
     assert "audio=Micro (USB)" in args
+
+
+def test_sender_audio_is_never_held_back():
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], dshow_audio_input_args("Micro"))
+    # Smooth drift compensation only, and no interleaving delay behind the video.
+    assert args[args.index("-af") + 1] == "aresample=async=1:min_hard_comp=0.100:first_pts=0"
+    assert args[args.index("-max_interleave_delta") + 1] == "0"

@@ -19,6 +19,7 @@ from .ffmpeg import (
     GPU_DECODERS,
     PLAYER_ENV,
     ToolchainRegistry,
+    build_monitor_command,
     build_player_command,
     build_route_command,
     build_sender_command,
@@ -35,6 +36,7 @@ log = logging.getLogger(__name__)
 PLAYER = "player:"
 ROUTE = "route:"
 SENDER = "sender"
+MONITOR = "monitor"
 
 NO_SRT_PLAYER = (
     "Aucun ffplay avec support SRT. Installe le FFmpeg standard dans bin/standard "
@@ -56,6 +58,7 @@ class Engine:
         self.desired_streams: set[str] = set()
         self.desired_routes: set[str] = set()
         self.sender_desired = False
+        self.monitor_desired = False
         self.active_routes: set[str] = set()  # explicitly started or used by a started stream
         self.errors: dict[str, str] = {}
 
@@ -112,10 +115,20 @@ class Engine:
         self.sender_desired = False
         self.reconcile()
 
+    def start_monitor(self) -> str | None:
+        self.monitor_desired = True
+        self.reconcile()
+        return self.errors.get(MONITOR)
+
+    def stop_monitor(self) -> None:
+        self.monitor_desired = False
+        self.reconcile()
+
     def shutdown(self) -> None:
         self.desired_streams.clear()
         self.desired_routes.clear()
         self.sender_desired = False
+        self.monitor_desired = False
         self.sup.stop_all()
 
     def tick(self) -> None:
@@ -136,6 +149,9 @@ class Engine:
 
     def sender_info(self) -> ProcessInfo:
         return self._info(SENDER, self.sender_desired)
+
+    def monitor_info(self) -> ProcessInfo:
+        return self._info(MONITOR, self.monitor_desired)
 
     def _info(self, key: str, desired: bool) -> ProcessInfo:
         if not desired:
@@ -199,6 +215,12 @@ class Engine:
         else:
             self.sup.stop(SENDER)
 
+        if self.monitor_desired:
+            spec, error = self._monitor_spec()
+            self._apply(MONITOR, spec, error, new_errors)
+        else:
+            self.sup.stop(MONITOR)
+
         self.errors = new_errors
 
     def _apply(self, key: str, spec: ProcessSpec | None, error: str | None, errors: dict[str, str]) -> None:
@@ -233,6 +255,7 @@ class Engine:
 
         source = stream["source"]
         live_udp = False
+        raw_video = source == "omt"
         if source == "srt":
             toolchain = self.tools.player_for("srt")
             if toolchain is None:
@@ -275,6 +298,7 @@ class Engine:
             decoder=decoder,
             title=f"{stream['name']} — py-multiview",
             live_udp=live_udp,
+            raw_video=raw_video,
         )
         return ProcessSpec(args, stream["name"], progress="ffplay", env=dict(PLAYER_ENV)), None
 
@@ -311,6 +335,17 @@ class Engine:
         args = build_sender_command(toolchain.ffmpeg, display, sender, audio_input)
         spec = ProcessSpec(args, "Émission OMT", progress="ffmpeg", graceful_quit=feeder is None, stdin_feeder=feeder)
         return spec, None
+
+    def _monitor_spec(self) -> tuple[ProcessSpec | None, str | None]:
+        monitor = self.config.get("monitor", {})
+        source = monitor.get("omtSource", "")
+        if not source:
+            return None, "Aucune source OMT à écouter."
+        toolchain = self.tools.player_for("omt")
+        if toolchain is None:
+            return None, NO_OMT_PLAYER
+        args = build_monitor_command(toolchain.ffplay, source, monitor.get("volume", 100))
+        return ProcessSpec(args, "Retour audio", progress="ffplay", env=dict(PLAYER_ENV)), None
 
     def loopback_device(self) -> audio.LoopbackDevice | None:
         """Default playback device for loopback capture (cached: probing opens PortAudio)."""

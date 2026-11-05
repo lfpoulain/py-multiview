@@ -147,3 +147,24 @@ def test_sender_loopback_unavailable_is_explained():
     engine = make_engine({"sender": {"displayId": "main", "audioSource": "loopback"}})
     engine.loopback_device = lambda: None
     assert "son du PC" in engine.start_sender()
+
+
+def test_audio_monitor_needs_a_source():
+    engine = make_engine({})
+    assert "Aucune source OMT" in engine.start_monitor()
+    engine.config["monitor"]["omtSource"] = "RÉGIE (Master)"
+    engine.reconcile()
+    args = engine.sup.running["monitor"].args
+    assert args[0] == "ffplay-omt"
+    assert args[-4:] == ["-f", "libomt", "-i", "RÉGIE (Master)"]
+    # No window and no video decoding: only the sound of the master return.
+    assert "-nodisp" in args and "-vn" in args
+
+
+def test_audio_monitor_follows_volume_and_stops():
+    engine = make_engine({"monitor": {"omtSource": "RÉGIE (Master)", "volume": 40}})
+    assert engine.start_monitor() is None
+    args = engine.sup.running["monitor"].args
+    assert args[args.index("-volume") + 1] == "40"
+    engine.stop_monitor()
+    assert "monitor" not in engine.sup.running

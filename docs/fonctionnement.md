@@ -11,6 +11,7 @@ flowchart LR
     route -- "UDP multicast" --> ffplay2["ffplay ×N<br/>plein écran"]
     omtsrc["Source OMT du réseau"] -- OMT --> ffplay3["ffplay OMT<br/>plein écran"]
     ecran["Écran du poste<br/>+ audio"] --> sender["ffmpeg<br/>gdigrab → libomt"] -- OMT --> reseau["Récepteurs OMT"]
+    omtmaster["Master de la régie"] -- OMT --> monitor["ffplay -nodisp -vn<br/>retour audio"] --> hp["Sortie audio du poste"]
 ```
 
 ## Deux FFmpeg
@@ -26,7 +27,7 @@ Au démarrage, chaque binaire est interrogé (`-protocols`, `-formats`, `-decode
 
 ## Le moteur à état désiré
 
-L'interface ne lance jamais un processus. Elle modifie la configuration et exprime une intention : *ce flux doit tourner*, *cette route doit tourner*, *l'émission doit tourner*. Deux fois par seconde, `Engine.reconcile()` confronte cette intention à la configuration et aux écrans détectés, puis :
+L'interface ne lance jamais un processus. Elle modifie la configuration et exprime une intention : *ce flux doit tourner*, *cette route doit tourner*, *l'émission doit tourner*, *le retour audio doit tourner*. Deux fois par seconde, `Engine.reconcile()` confronte cette intention à la configuration et aux écrans détectés, puis :
 
 - lance ce qui manque ;
 - relance ce dont la ligne de commande a changé : c'est ainsi que les réglages s'appliquent à chaud ;
@@ -60,9 +61,13 @@ La vignette d'une carte est une capture de l'écran de sortie lui-même, faite p
 L'émission capture l'écran avec `gdigrab` à cadence constante et l'envoie au muxer `libomt` sans réencodage (`wrapped_avframe`). Pour l'audio :
 
 - **Entrée DirectShow** : ffmpeg ouvre directement le périphérique (`-f dshow -i audio=…`).
-- **Son du PC** : FFmpeg ne sait pas capturer le *loopback* WASAPI. L'application capture donc la sortie audio par défaut avec PyAudioWPatch et l'écrit en PCM brut sur l'entrée standard de ffmpeg. Le loopback ne fournit rien quand le PC est silencieux : l'écriture est donc cadencée en temps réel et complétée par du silence, pour que ffmpeg ne se bloque jamais.
+- **Son du PC** : FFmpeg ne sait pas capturer le *loopback* WASAPI. L'application capture donc la sortie audio par défaut avec PyAudioWPatch et l'écrit en PCM brut sur l'entrée standard de ffmpeg. Les échantillons capturés partent dès que WASAPI les livre ; l'horloge murale ne sert qu'à combler de silence les vrais trous, car le loopback ne fournit rien quand le PC est muet.
 
-L'audio est rééchantillonné en 48 kHz stéréo (`aresample=async`), ce qui absorbe la dérive entre l'horloge de capture et celle de l'écran.
+L'audio est rééchantillonné en 48 kHz stéréo. La compensation de dérive reste douce (`aresample=async=1`, coupe franche seulement au-delà de 100 ms) : une valeur plus agressive réagirait à chaque micro-gigue des horodatages de capture et ferait « chanter » le son. Le muxage n'attend jamais l'image (`-max_interleave_delta 0`), sinon un à-coup de `gdigrab` libérerait l'audio par paquets.
+
+## Retour audio OMT
+
+Le retour du master est un `ffplay -nodisp -vn` sur la source OMT choisie : sans fenêtre et sans flux vidéo mappé, les trames non compressées sont jetées dès le démultiplexage et ne retardent jamais le son. C'est aussi pourquoi la réception *avec* image reçoit `-infbuf` : une trame OMT 1080p pèse ~4 Mo, une 2160p ~16 Mo, alors que ffplay plafonne l'ensemble de ses files de paquets à 15 Mo — sans cela le thread de lecture se met en pause à chaque trame et la file audio se vide.
 
 ## Routage multicast
 

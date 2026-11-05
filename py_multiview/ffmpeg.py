@@ -231,6 +231,7 @@ def build_player_command(
     decoder: str | None = None,
     title: str = "py-multiview",
     live_udp: bool = False,
+    raw_video: bool = False,
 ) -> list[str]:
     args = [str(ffplay), "-hide_banner", "-loglevel", "warning", "-stats"]
     if decoder:
@@ -256,9 +257,36 @@ def build_player_command(
         args += ["-vf", vf]
     if live_udp:
         args += ["-framedrop", "-sync", "ext"]
+    if raw_video:
+        # OMT carries uncompressed video: one 1080p frame is ~4 MB, one 2160p
+        # frame ~16 MB, while ffplay caps all its packet queues at 15 MB
+        # combined. The reader thread then pauses after nearly every frame and
+        # the audio queue runs dry — continuous crackling. "-infbuf" lifts the
+        # cap so audio keeps flowing, "-framedrop" sheds late frames instead of
+        # letting video push the audio clock around.
+        args += ["-infbuf", "-framedrop", "-sync", "audio"]
     if mute:
         args.append("-an")
     return args + input_args
+
+
+def build_monitor_command(ffplay: Path, source: str, volume: int = 100) -> list[str]:
+    """Audio-only playback of an OMT source: the master return, no window.
+
+    "-vn" makes ffplay drop the video packets at the demuxer, so the
+    uncompressed frames never reach a queue and never delay the sound.
+    """
+    return [
+        str(ffplay), "-hide_banner", "-loglevel", "warning", "-stats",
+        "-nodisp", "-vn", "-sn",
+        "-fflags", "nobuffer", "-flags", "low_delay",
+        "-probesize", "500000", "-analyzeduration", "500000",
+        "-sync", "audio",
+        "-volume", str(int(volume)),
+        # Live input: leave when the source goes away so the supervisor re-arms.
+        "-autoexit",
+        "-f", "libomt", "-i", source,
+    ]
 
 
 def build_route_command(ffmpeg: Path, route: dict, localaddr: str = "") -> list[str]:
@@ -296,8 +324,16 @@ def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input:
         audio = [
             "-thread_queue_size", "1024", *audio_input,
             "-map", "0:v:0", "-map", "1:a:0",
-            # OMT carries 48 kHz audio; async resampling absorbs capture clock drift.
-            "-af", "aresample=async=1000", "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
+            # OMT carries 48 kHz audio. Capture timestamps jitter by a few
+            # milliseconds (dshow) and drift against the system clock, so the
+            # resampler stretches smoothly and only cuts/pads past 100 ms of
+            # real drift. A higher "async" would re-time on every jitter spike
+            # and audibly warble the sound.
+            "-af", "aresample=async=1:min_hard_comp=0.100:first_pts=0",
+            "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
+            # Never hold an audio packet back waiting for the matching video
+            # frame: gdigrab stalls would otherwise release the sound in bursts.
+            "-max_interleave_delta", "0",
         ]
     else:
         audio = ["-map", "0:v:0", "-an"]

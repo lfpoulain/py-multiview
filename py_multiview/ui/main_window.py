@@ -1,4 +1,4 @@
-"""Main window: screens, OMT sender, routes and incoming stream cards."""
+"""Main window: screens, OMT sender, audio return, routes and stream cards."""
 
 from __future__ import annotations
 
@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self.refresh_displays(force=True)
         self.reload_cards()
         self.load_sender_fields()
+        self.load_monitor_fields()
         self.refresh_routes_list()
         self.refresh_engine_summary()
         self.engine.update(self.config, self.displays)
@@ -259,6 +260,42 @@ class MainWindow(QMainWindow):
         self.sender_detail.hide()
         sender.body.addWidget(self.sender_detail)
         col.addWidget(sender)
+        col.addWidget(divider())
+
+        # Audio-only OMT return.
+        monitor = Section("Retour audio OMT")
+        self.monitor_pill = StatusPill()
+        monitor.add_action(self.monitor_pill)
+        monitor.body.addWidget(label("Écoute le son d'une source OMT sur ce poste, sans image.", "Muted", wrap=True))
+        line = QHBoxLayout()
+        self.monitor_source = QLineEdit()
+        self.monitor_source.setPlaceholderText("MACHINE (Nom de la source)")
+        self.monitor_source.editingFinished.connect(self.on_monitor_changed)
+        line.addWidget(self.monitor_source, 1)
+        find_monitor = button(variant="icon", icon="search", icon_color=theme.TEXT_DIM,
+                              tooltip="Découvrir les sources OMT du réseau")
+        find_monitor.clicked.connect(self.discover_monitor_source)
+        line.addWidget(find_monitor)
+        monitor.body.addLayout(line)
+        line = QHBoxLayout()
+        line.addWidget(field_label("Volume", 52))
+        self.monitor_volume = spin(0, 100, 100, suffix=" %", width=80)
+        self.monitor_volume.valueChanged.connect(self.on_monitor_changed)
+        line.addWidget(self.monitor_volume)
+        line.addStretch(1)
+        monitor.body.addLayout(line)
+        actions = QHBoxLayout()
+        self.monitor_btn = button("Écouter", icon="broadcast")
+        self.monitor_btn.clicked.connect(self.toggle_monitor)
+        actions.addWidget(self.monitor_btn, 1)
+        monitor_logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM, tooltip="Journal du retour audio")
+        monitor_logs.clicked.connect(lambda: self.show_logs("monitor", "Journal — retour audio OMT"))
+        actions.addWidget(monitor_logs)
+        monitor.body.addLayout(actions)
+        self.monitor_detail = label("", "Detail", wrap=True)
+        self.monitor_detail.hide()
+        monitor.body.addWidget(self.monitor_detail)
+        col.addWidget(monitor)
         col.addWidget(divider())
 
         # Routes.
@@ -668,6 +705,41 @@ class MainWindow(QMainWindow):
                 self.notify(f"⚠ Émission OMT : {error}", 8000)
         self.on_tick()
 
+    # ------------------------------------------------------ audio monitor
+
+    def load_monitor_fields(self) -> None:
+        monitor = self.config["monitor"]
+        for w in (self.monitor_source, self.monitor_volume):
+            w.blockSignals(True)
+        self.monitor_source.setText(monitor["omtSource"])
+        self.monitor_volume.setValue(monitor["volume"])
+        for w in (self.monitor_source, self.monitor_volume):
+            w.blockSignals(False)
+
+    def on_monitor_changed(self, *_args) -> None:
+        monitor = self.config["monitor"]
+        monitor["omtSource"] = self.monitor_source.text().strip()
+        monitor["volume"] = self.monitor_volume.value()
+        self.schedule_commit()
+
+    def discover_monitor_source(self) -> None:
+        toolchain = self.engine.tools.ffmpeg_for("omt")
+        dlg = OMTDiscoveryDialog(self, toolchain.ffmpeg if toolchain else None, self.monitor_source.text().strip())
+        if dlg.exec() == QDialog.Accepted:
+            self.monitor_source.setText(dlg.selected_source)
+            self.on_monitor_changed()
+
+    def toggle_monitor(self) -> None:
+        self.on_monitor_changed()
+        self.commit()
+        if self.engine.monitor_desired:
+            self.engine.stop_monitor()
+        else:
+            error = self.engine.start_monitor()
+            if error:
+                self.notify(f"⚠ Retour audio : {error}", 8000)
+        self.on_tick()
+
     # ------------------------------------------------------------ routes
 
     def open_routes(self) -> None:
@@ -738,6 +810,16 @@ class MainWindow(QMainWindow):
             set_button(self.sender_btn, "Arrêter l'émission", "danger", "stop")
         else:
             set_button(self.sender_btn, "Émettre", "success", "broadcast")
+
+        monitor = self.engine.monitor_info()
+        self.monitor_pill.set_status(monitor.status, "Écoute" if monitor.status == Status.ACTIVE else None)
+        set_state(self.monitor_detail, monitor.status.value)
+        self.monitor_detail.setText(monitor.detail)
+        self.monitor_detail.setVisible(bool(monitor.detail))
+        if self.engine.monitor_desired:
+            set_button(self.monitor_btn, "Couper le retour", "danger", "stop")
+        else:
+            set_button(self.monitor_btn, "Écouter", "success", "broadcast")
         self._update_routes_status()
 
     def refresh_engine_summary(self) -> None:
@@ -775,6 +857,7 @@ class MainWindow(QMainWindow):
         self.refresh_displays(force=True)
         self.reload_cards()
         self.load_sender_fields()
+        self.load_monitor_fields()
         self.refresh_routes_list()
         self.commit()
         self.notify("Configuration réinitialisée.")
