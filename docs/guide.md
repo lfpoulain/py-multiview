@@ -104,10 +104,23 @@ Dans le panneau **Émission OMT** :
 | **Nom** | Nom publié sur le réseau ; les récepteurs le voient sous la forme `MACHINE (Nom)`. |
 | **Cadence** | 1 à 60 images par seconde. |
 | **Format** | UYVY 4:2:2 (recommandé), BGRA 4:4:4 (couleurs complètes, plus de débit) ou YUV 10 bits. |
-| **Audio** | **Sans son**, **Son du PC** (tout ce que joue la sortie audio par défaut de Windows) ou une **entrée** de la liste : micro, carte son, câble virtuel (VB-Audio…), bus vMix Audio. ↻ actualise la liste. |
+| **Audio** | **Sans son**, **Son du PC** (tout ce que joue la sortie audio par défaut), **Son de &lt;programme&gt;**, **Son du PC sauf &lt;programme&gt;**, ou une **entrée** de la liste : micro, carte son, câble virtuel (VB-Audio…), bus vMix Audio. ↻ actualise la liste. |
 | **Horloge de sortie** | Cadence la sortie sur l'horloge OMT plutôt que sur la capture. |
 
-L'audio part dans le format natif d'OMT, sans conversion ni rééchantillonnage. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
+L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
+
+### N'émettre que le son d'un programme
+
+**Son de &lt;programme&gt;** ne prend que ce que joue ce logiciel : le navigateur, un lecteur vidéo, un jeu — sans les notifications Windows ni le reste du PC.
+
+**Son du PC sauf &lt;programme&gt;** fait l'inverse, et sert surtout à une chose : si tu écoutes le retour audio sur le même poste pendant que tu émets le son du PC, le retour repart dans l'émission et boucle. Choisir *Son du PC sauf py-multiview* supprime la boucle.
+
+La liste propose les programmes qui ont une fenêtre ouverte. Quelques points à connaître :
+
+- on capture un **programme entier**, pas un onglet : tout le son du navigateur part ensemble ;
+- un programme découpé en plusieurs processus (un navigateur) est capturé en entier, Windows suivant l'arborescence ;
+- si le programme n'est pas lancé au démarrage de l'émission, celle-ci le dit dans son journal et réessaie ;
+- il faut **Windows 10 build 20348 ou plus récent**. Sur une version antérieure, l'émission le signale et il faut passer par un câble virtuel.
 
 **Format** et **Horloge de sortie** sont grisés quand l'émission passe en direct par libomt, ce qui est le cas normal : la bibliothèque encode l'image elle-même. Ils ne servent qu'au repli FFmpeg, signalé par `OMT` au lieu de `OMT natif` dans la barre d'état.
 
@@ -152,7 +165,7 @@ L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-liv
 |---|---|
 | **Ne jamais afficher de flux sur l'écran principal** | Réserve l'écran de travail : il n'est pas proposé dans les cartes ni utilisé par Auto-assigner. |
 | **Décodage vidéo** | Processeur (recommandé, tous codecs), ou GPU NVIDIA / Intel / AMD pour soulager le processeur avec beaucoup de flux **H.264**. Seuls les décodeurs disponibles sur le poste sont proposés. |
-| **Émettre en direct par libomt** | Coché par défaut. Décoché, l'écran est capturé et publié par FFmpeg (gdigrab) comme avant la 0.3.4. À essayer si l'image reçue est noire ou figée. |
+| **Émettre en direct par libomt** | **Décoché par défaut** : l'écran est capturé et publié par FFmpeg (gdigrab), le chemin éprouvé. Coché, libomt émet sans processus intermédiaire — plus léger, mais l'image est noire sur certaines machines. |
 | **Pilotage à distance** | Ouvre l'API HTTP locale, son port, et la restriction à ce poste. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
 | **Moteur FFmpeg** | Diagnostic des builds FFmpeg détectés et de leurs capacités. |

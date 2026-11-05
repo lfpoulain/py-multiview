@@ -84,6 +84,7 @@ L'image part à cadence constante depuis une origine fixe : une capture lente ne
 L'audio est publié par un thread séparé, sur sa propre horloge :
 
 - **Son du PC** : *loopback* WASAPI de la sortie par défaut, via PyAudioWPatch, directement en float 32 bits.
+- **Son d'un programme** : `ActivateAudioInterfaceAsync` en mode `PROCESS_LOOPBACK` (`proc_audio.py`), qui capture un arbre de processus — ou tout le PC *sauf* lui, ce qui empêche l'émission de réavaler son propre retour audio. L'activation est asynchrone et répond par un appel COM : un petit objet COM à table virtuelle construite à la main reçoit la réponse, le tout en `ctypes`. Windows n'annonce aucun format pour ce type de client, le format est donc imposé en float 32 bits 48 kHz stéréo.
 - **Entrée** : n'importe quel point de capture WASAPI — micro, carte son, câble virtuel, bus vMix. Les configurations écrites par les versions précédentes nomment ces entrées `dshow:…` ; elles désignent le même matériel et sont retrouvées par leur nom.
 
 **Les horodatages audio viennent du nombre d'échantillons déjà publiés**, pas de l'horloge murale : c'est ce qui garantit un flux continu pour le récepteur, même si la capture gigue. Un *loopback* ne livre rien quand le PC est muet ; le silence n'est fabriqué que lorsque le périphérique se tait vraiment, et un coussin de 60 ms évite que ce silence repousse les échantillons qui reprennent juste après.
@@ -125,6 +126,7 @@ py_multiview/
 ├── omtlib.py       liaison ctypes vers libomt (découverte, réception, émission)
 ├── native.py       émission et retour audio en direct sur libomt
 ├── capture.py      capture d'écran GDI en BGRA
+├── proc_audio.py   capture du son d'un programme (WASAPI process loopback)
 ├── audio.py        points de capture audio (loopback WASAPI, entrées)
 ├── config.py       configuration : valeurs par défaut, normalisation, sauvegarde
 ├── displays.py     écrans Windows avec identifiants stables

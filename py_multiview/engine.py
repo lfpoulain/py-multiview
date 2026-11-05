@@ -442,6 +442,11 @@ class Engine:
                 return None, "Capture du son du PC indisponible (aucune sortie audio par défaut)."
             audio_input = loopback_input_args(device.rate, device.channels)
             feeder = audio.LoopbackFeeder(device)
+        elif source.startswith((audio.PROGRAM_PREFIX, audio.EXCEPT_PREFIX)):
+            # Windows hands a process loopback over in float; it reaches ffmpeg
+            # on its stdin like the PC's own sound.
+            audio_input = loopback_input_args(48000, 2)
+            feeder = audio.ProgramFeeder(source)
         elif source.startswith(audio.DSHOW_PREFIX):
             audio_input = dshow_audio_input_args(source[len(audio.DSHOW_PREFIX):])
         args = build_sender_command(toolchain.ffmpeg, display, sender, audio_input)

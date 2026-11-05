@@ -474,17 +474,18 @@ class PreferencesDialog(QDialog):
         layout.addWidget(general)
 
         emission = Section("Émission OMT")
-        self.sender_native = QCheckBox("Émettre en direct par libomt (recommandé)")
-        self.sender_native.setChecked(config["sender"].get("native", True))
+        self.sender_native = QCheckBox("Émettre en direct par libomt (expérimental)")
+        self.sender_native.setChecked(config["sender"].get("native", False))
         self.sender_native.setEnabled(omtlib.available())
         self.sender_native.setToolTip(
-            "Décoché, l'écran est capturé et publié par FFmpeg (gdigrab), comme avant la 0.3.4.\n"
-            "À essayer si l'image reçue est noire ou figée."
+            "Décoché (par défaut), l'écran est capturé et publié par FFmpeg (gdigrab).\n"
+            "Coché, libomt émet sans processus intermédiaire : plus léger, mais\n"
+            "l'image est noire sur certaines machines."
         )
         emission.body.addWidget(self.sender_native)
         emission.body.addWidget(
-            label("libomt capture et encode l'image sans processus intermédiaire. "
-                  "Le repli FFmpeg sert à comparer en cas de problème d'image.", "Muted", wrap=True)
+            label("FFmpeg est le chemin éprouvé. libomt encode l'image lui-même et coûte moins cher "
+                  "en processeur, mais donne une image noire sur certaines machines.", "Muted", wrap=True)
         )
         layout.addWidget(emission)
 

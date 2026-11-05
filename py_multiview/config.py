@@ -123,11 +123,13 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
     pixel_format = _str(sender.get("pixelFormat"), "uyvy422").lower()
     sender["pixelFormat"] = pixel_format if pixel_format in OMT_PIXEL_FORMATS else "uyvy422"
     sender["clockOutput"] = bool(sender.get("clockOutput", False))
-    # False forces the FFmpeg/gdigrab sender even when libomt is available.
-    sender["native"] = bool(sender.get("native", True))
-    # "" (no audio) | "loopback" (what the PC plays) | "in:<device>" | "dshow:<device>" (legacy)
+    # FFmpeg/gdigrab by default: the libomt sender gives a black picture on
+    # some machines. True switches the emission back to libomt.
+    sender["native"] = bool(sender.get("native", False))
+    # "" | "loopback" (what the PC plays) | "in:<device>" | "dshow:<device>" (legacy)
+    # | "app:<exe>" (one program) | "notapp:<exe>" (the PC except that program)
     audio = _str(sender.get("audioSource"))
-    valid = audio in ("", "loopback") or audio.startswith(("in:", "dshow:"))
+    valid = audio in ("", "loopback") or audio.startswith(("in:", "dshow:", "app:", "notapp:"))
     sender["audioSource"] = audio if valid else ""
     try:
         sender["referenceLevel"] = max(0.0, min(20.0, float(sender.get("referenceLevel", 1.0))))

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio, omtlib
+from .. import APP_NAME, __version__, audio, omtlib, proc_audio
 from ..api import ApiServer
 from ..api import dispatch as api_dispatch
 from ..config import OMT_PIXEL_FORMATS, default_config, default_stream, load_config, save_config
@@ -65,7 +65,7 @@ class MainWindow(QMainWindow):
         self.cards: dict[str, StreamCard] = {}
         self._log_windows: dict[str, LogDialog] = {}
         self.host_ip = self.engine.host_ip
-        self._audio_devices: list[str] = []
+        self._audio_sources: list[list[str]] = [[], []]  # [périphériques, programmes]
         self._previews: dict[str, PreviewDialog] = {}
 
         self._save_timer = QTimer(self)
@@ -669,23 +669,35 @@ class MainWindow(QMainWindow):
 
     def refresh_audio_devices(self) -> None:
         """List the audio inputs off the UI thread (enumeration can take ~1 s)."""
-        if omtlib.available():
-            work = lambda: [d.name for d in audio.list_input_devices()]  # noqa: E731
-        else:
-            toolchain = self.engine.tools.ffmpeg_for("omt")
-            ffmpeg = toolchain.ffmpeg if toolchain else None
-            work = lambda: audio.list_dshow_audio(ffmpeg)  # noqa: E731
+        native = omtlib.available() and self.config["sender"].get("native", True)
+        toolchain = self.engine.tools.ffmpeg_for("omt")
+        ffmpeg = toolchain.ffmpeg if toolchain else None
+
+        def work():
+            devices = [d.name for d in audio.list_input_devices()] if native else audio.list_dshow_audio(ffmpeg)
+            programs = sorted({p.name for p in proc_audio.list_programs()}, key=str.lower)
+            return [devices, programs]
+
         threading.Thread(target=lambda: self.audio_devices_ready.emit(work()), daemon=True).start()
 
-    def _fill_audio_sources(self, devices: list) -> None:
-        self._audio_devices = list(devices)
+    def _fill_audio_sources(self, payload: list) -> None:
+        devices, programs = payload
+        self._audio_sources = [list(devices), list(programs)]
         selected = self.config["sender"].get("audioSource", "")
-        prefix = audio.INPUT_PREFIX if omtlib.available() else audio.DSHOW_PREFIX
+        native = omtlib.available() and self.config["sender"].get("native", True)
+        prefix = audio.INPUT_PREFIX if native else audio.DSHOW_PREFIX
         combo = self.sender_audio
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("Sans son", "")
         combo.addItem("Son du PC (sortie par défaut)", audio.LOOPBACK)
+        if programs:
+            combo.insertSeparator(combo.count())
+            for name in programs:
+                combo.addItem(f"Son de {name}", audio.PROGRAM_PREFIX + name)
+            combo.insertSeparator(combo.count())
+            for name in programs:
+                combo.addItem(f"Son du PC sauf {name}", audio.EXCEPT_PREFIX + name)
         if devices:
             combo.insertSeparator(combo.count())
         for name in devices:
@@ -760,7 +772,7 @@ class MainWindow(QMainWindow):
         for w in widgets:
             w.blockSignals(False)
         self._fill_sender_displays()
-        self._fill_audio_sources(self._audio_devices)
+        self._fill_audio_sources(self._audio_sources)
 
     def on_sender_changed(self, *_args) -> None:
         sender = self.config["sender"]

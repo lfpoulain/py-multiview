@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from py_multiview import audio
 from py_multiview.config import normalize_config
 from py_multiview.engine import Engine
 from py_multiview.ffmpeg import Toolchain
@@ -224,7 +225,7 @@ def test_native_monitor_is_preferred_over_ffplay():
 
 def test_native_sender_publishes_the_screen_geometry():
     engine = make_engine(
-        {"sender": {"displayId": "side", "name": "Régie", "fps": 50}}, native=True
+        {"sender": {"displayId": "side", "name": "Régie", "fps": 50, "native": True}}, native=True
     )
     assert engine.start_sender() is None
     worker = engine.fake_workers["sender"]
@@ -232,15 +233,27 @@ def test_native_sender_publishes_the_screen_geometry():
     assert "sender" not in engine.sup.running
 
 
-def test_sender_can_be_forced_back_onto_ffmpeg():
-    engine = make_engine(
-        {"sender": {"displayId": "side", "name": "Régie", "native": False}}, native=True
-    )
+def test_ffmpeg_sender_is_the_default():
+    # Le sender libomt donne une image noire sur certaines machines : même
+    # quand il est disponible, c'est gdigrab qui émet sauf demande explicite.
+    engine = make_engine({"sender": {"displayId": "side", "name": "Régie"}}, native=True)
+    assert engine.config["sender"]["native"] is False
     assert engine.start_sender() is None
-    # The libomt worker must stay out of the way, and gdigrab take over.
     assert not engine.fake_workers.get("sender", FakeWorker("sender")).running
     args = engine.sup.running["sender"].args
     assert "gdigrab" in args and "libomt" in args
+
+
+def test_program_audio_reaches_ffmpeg_through_a_pipe():
+    engine = make_engine({"sender": {"displayId": "side", "audioSource": "app:chrome.exe"}})
+    assert engine.start_sender() is None
+    spec = engine.sup.running["sender"]
+    # Windows livre le son du programme en float : il arrive par stdin, comme
+    # le son du PC, et non par un périphérique DirectShow.
+    assert "-f" in spec.args and "pipe:0" in spec.args
+    assert "dshow" not in spec.args
+    assert isinstance(spec.stdin_feeder, audio.ProgramFeeder)
+    assert spec.stdin_feeder.source == "app:chrome.exe"
 
 
 def test_floating_window_uses_the_listening_source_by_default():
@@ -268,7 +281,7 @@ def test_floating_window_can_watch_another_source():
 
 def test_native_sender_reports_a_missing_audio_input():
     engine = make_engine(
-        {"sender": {"displayId": "side", "audioSource": "dshow:Absent"}}, native=True
+        {"sender": {"displayId": "side", "audioSource": "dshow:Absent", "native": True}}, native=True
     )
     error = engine.start_sender()
     assert error and "Absent" in error

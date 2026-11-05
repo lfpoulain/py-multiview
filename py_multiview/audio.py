@@ -19,12 +19,15 @@ Which half of this module is used depends on the sender:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import subprocess
 import threading
 import time
+from array import array
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +39,8 @@ log = logging.getLogger(__name__)
 LOOPBACK = "loopback"
 DSHOW_PREFIX = "dshow:"  # written by versions that used the FFmpeg sender
 INPUT_PREFIX = "in:"
+PROGRAM_PREFIX = "app:"  # app:<exe>  — only that program's sound
+EXCEPT_PREFIX = "notapp:"  # notapp:<exe> — the PC's sound except that program
 
 _DSHOW_AUDIO_RE = re.compile(r'"(.+)"\s+\(audio\)')
 
@@ -234,6 +239,116 @@ class FloatRecorder:
             pass
         if pa is not None:
             pa.terminate()
+
+
+def program_capture(source: str):
+    """``(ProcessCapture, description)`` for an ``app:``/``notapp:`` source.
+
+    Raises OSError when the program is not running: a deck or a restart must
+    get a message naming it, not a silent stream.
+    """
+    from . import proc_audio
+
+    exclude = source.startswith(EXCEPT_PREFIX)
+    name = source.split(":", 1)[1].strip()
+    if not name:
+        raise OSError("Aucun programme choisi.")
+    pids = proc_audio.pids_of(name)
+    if not pids:
+        raise OSError(f"Le programme « {name} » ne tourne pas.")
+    # Windows captures a whole process tree: the first process is enough for
+    # a browser that splits itself into many.
+    what = f"tout le son sauf « {name} »" if exclude else f"son de « {name} »"
+    return proc_audio.ProcessCapture(pids[0], exclude=exclude), what
+
+
+class ProgramFeeder:
+    """Same pipe feed as :class:`LoopbackFeeder`, from one program's sound.
+
+    Windows delivers nothing while the program is silent, exactly like a
+    loopback, so the real-time pacing and gap filling are shared.
+    """
+
+    def __init__(self, source: str, rate: int = 48000, channels: int = 2) -> None:
+        self.source = source
+        self.rate = rate
+        self.channels = channels
+        self.frame_bytes = 2 * channels  # s16le on the pipe
+        self._capture = None
+        self._buffer: deque[bytes] = deque()
+        self._buffered = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _on_frames(self, data: bytes, _frames: int) -> None:
+        pcm = _float_to_s16(data)
+        with self._lock:
+            self._buffer.append(pcm)
+            self._buffered += len(pcm)
+            while self._buffered > self.rate * self.frame_bytes // 2:  # 0,5 s max
+                self._buffered -= len(self._buffer.popleft())
+
+    def _drain(self) -> bytes:
+        with self._lock:
+            out = b"".join(self._buffer)
+            self._buffer.clear()
+            self._buffered = 0
+        return out
+
+    def __call__(self, pipe) -> Callable[[], None]:
+        capture, what = program_capture(self.source)
+        self._capture = capture
+        log.info("Capture audio : %s", what)
+        capture.rate, capture.channels = self.rate, self.channels
+        capture.start(self._on_frames)
+        self._thread = threading.Thread(target=self._run, args=(pipe,), daemon=True, name="program-audio")
+        self._thread.start()
+        return self.stop
+
+    def _run(self, pipe) -> None:
+        cushion = int(self.rate * LoopbackFeeder.CUSHION)
+        start = time.perf_counter()
+        written = 0
+        try:
+            while not self._stop.is_set():
+                data = self._drain()
+                if data:
+                    pipe.write(data)
+                    pipe.flush()
+                    written += len(data) // self.frame_bytes
+                else:
+                    due = int((time.perf_counter() - start) * self.rate)
+                    gap = due - written - cushion
+                    if gap > 0:
+                        pipe.write(b"\x00" * (gap * self.frame_bytes))
+                        pipe.flush()
+                        written += gap
+                time.sleep(LoopbackFeeder.CHUNK / 2)
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                pipe.close()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._capture is not None:
+            self._capture.close()
+            self._capture = None
+        thread, self._thread = self._thread, None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
+
+def _float_to_s16(data: bytes) -> bytes:
+    """float32 interleaved to the s16le PCM ffmpeg reads on its stdin."""
+    floats = array("f")
+    floats.frombytes(data)
+    out = array("h", bytes(2 * len(floats)))
+    for i, v in enumerate(floats):
+        out[i] = 32767 if v >= 1.0 else -32768 if v <= -1.0 else int(v * 32767.0)
+    return out.tobytes()
 
 
 class LoopbackFeeder:

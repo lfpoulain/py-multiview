@@ -56,7 +56,7 @@
     </td>
     <td valign="top">
       <h3>🎙️ Émission OMT avec le son</h3>
-      Publie un écran du poste en OMT, avec le son du PC ou n'importe quelle entrée audio : micro, carte son, câble virtuel, bus vMix. Le son part dans le format natif d'OMT, sans conversion.
+      Publie un écran du poste en OMT, avec le son du PC, <b>celui d'un seul programme</b>, ou n'importe quelle entrée audio : micro, carte son, câble virtuel, bus vMix.
     </td>
   </tr>
   <tr>
