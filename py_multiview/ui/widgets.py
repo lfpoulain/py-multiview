@@ -55,7 +55,7 @@ def button(
     if large:
         btn.setProperty("size", "large")
     if icon:
-        btn.setIcon(theme.icon(icon, icon_color))
+        btn.setIcon(theme.icon(icon, theme.VARIANT_ICON.get(variant or "", icon_color)))
         btn.setIconSize(QSize(16, 16))
     if tooltip:
         btn.setToolTip(tooltip)
@@ -69,7 +69,7 @@ def icon_button(icon: str, tooltip: str, color: str = theme.TEXT_DIM) -> QPushBu
 def set_button(btn: QPushButton, text: str, variant: str, icon: str | None = None, icon_color: str = "#ffffff") -> None:
     btn.setText(text)
     if icon:
-        btn.setIcon(theme.icon(icon, icon_color))
+        btn.setIcon(theme.icon(icon, theme.VARIANT_ICON.get(variant, icon_color)))
     if btn.property("variant") != variant:
         btn.setProperty("variant", variant)
         repolish(btn)

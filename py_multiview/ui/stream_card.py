@@ -76,7 +76,7 @@ class StreamCard(QFrame):
         self.name_edit.setPlaceholderText("Nom du flux")
         self.name_edit.editingFinished.connect(self._emit_changed)
         head.addWidget(self.name_edit, 1)
-        self.toggle_btn = button("Démarrer", icon="play", icon_color=theme.SUCCESS)
+        self.toggle_btn = button("Démarrer", icon="play", icon_color=theme.ACCENT)
         self.toggle_btn.setMinimumWidth(110)
         self.toggle_btn.clicked.connect(lambda: self.toggle_requested.emit(self.stream_id))
         head.addWidget(self.toggle_btn)
@@ -301,7 +301,7 @@ class StreamCard(QFrame):
             if running:
                 set_button(self.toggle_btn, "Arrêter", "danger-ghost", "stop", theme.DANGER)
             else:
-                set_button(self.toggle_btn, "Démarrer", "", "play", theme.SUCCESS)
+                set_button(self.toggle_btn, "Démarrer", "", "play", theme.ACCENT)
 
     # -- internals -----------------------------------------------------------
 
