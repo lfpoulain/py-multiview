@@ -236,6 +236,12 @@ class Receiver:
             return None
         # Valid only until the next omt_receive call: copy it out now.
         raw = ctypes.string_at(frame.Data, min(frame.DataLength, channels * samples * 4))
+        # Trust the bytes actually there, not the announced sample count: a
+        # short frame would otherwise desynchronise the de-interleaving.
+        samples = min(samples, len(raw) // (4 * channels))
+        if not samples:
+            return None
+        raw = raw[: 4 * channels * samples]
         return AudioFrame(
             rate=frame.SampleRate or 48000,
             channels=channels,

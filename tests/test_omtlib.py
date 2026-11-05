@@ -46,6 +46,28 @@ def test_mono_audio_is_left_untouched():
     assert omtlib._planar_to_interleaved(mono, 1, 2, 1.0) == mono
 
 
+def test_short_frames_do_not_desynchronise_channels():
+    frame = omtlib.OMTMediaFrame()
+    frame.Type = omtlib.FRAME_AUDIO
+    frame.Codec = omtlib.CODEC_FPA1
+    frame.SampleRate, frame.Channels = 48000, 2
+    frame.SamplesPerChannel = 4  # announced…
+    payload = ctypes.create_string_buffer(floats([1.0, 2.0, -1.0, -2.0]), 16)
+    frame.Data = ctypes.cast(payload, ctypes.c_void_p)
+    frame.DataLength = 16  # …but only 2 per channel delivered
+
+    class FakeLib:
+        @staticmethod
+        def omt_receive(_handle, _types, _timeout):
+            return ctypes.pointer(frame)
+
+    receiver = omtlib.Receiver.__new__(omtlib.Receiver)
+    receiver._lib, receiver._handle = FakeLib, 1
+    received = receiver.receive_audio(0, 1.0)
+    assert received.samples == 2
+    assert list(array("f", received.data)) == [1.0, -1.0, 2.0, -2.0]
+
+
 def test_input_sources_accept_both_prefixes():
     for source in ("", "loopback", "in:CABLE Output", "dshow:Micro"):
         assert normalize_config({"sender": {"audioSource": source}})["sender"]["audioSource"] == source
