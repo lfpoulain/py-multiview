@@ -270,6 +270,38 @@ def build_player_command(
     return args + input_args
 
 
+def build_floating_command(
+    ffplay: Path,
+    source: str,
+    width: int = 640,
+    height: int = 360,
+    x: int = 80,
+    y: int = 80,
+    volume: int = 0,
+    on_top: bool = True,
+) -> list[str]:
+    """A small always-on-top window showing an OMT return, with its own volume.
+
+    Unlike a stream card this never takes a whole screen: it is meant to sit
+    over the desktop while working.
+    """
+    args = [
+        str(ffplay), "-hide_banner", "-loglevel", "warning", "-stats",
+        "-fflags", "nobuffer", "-flags", "low_delay",
+        "-probesize", "500000", "-analyzeduration", "500000",
+        "-window_title", f"Retour — {source}",
+        "-left", str(int(x)), "-top", str(int(y)),
+        "-x", str(max(160, int(width))), "-y", str(max(90, int(height))),
+        "-volume", str(max(0, min(100, int(volume)))),
+        # Uncompressed frames: same packet-queue precaution as a stream card.
+        "-infbuf", "-framedrop",
+        "-autoexit",
+    ]
+    if on_top:
+        args.append("-alwaysontop")
+    return [*args, "-f", "libomt", "-i", source]
+
+
 def build_monitor_command(ffplay: Path, source: str, volume: int = 100) -> list[str]:
     """Audio-only playback of an OMT source: the master return, no window.
 

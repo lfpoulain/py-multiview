@@ -118,7 +118,20 @@ Le panneau **Retour audio OMT** lit le son d'une source OMT sur la sortie audio 
 2. Régler le **Volume** (0 à 100 %).
 3. Cliquer sur **Écouter**.
 
-Le volume se règle sans interrompre le son ; changer de source relance l'écoute. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
+Le volume se règle sans interrompre le son ; changer de source relance l'écoute.
+
+### Fenêtre flottante
+
+Sous les réglages d'écoute, **Fenêtre flottante** ouvre une petite fenêtre vidéo posée sur le bureau, toujours au-dessus des autres, pour surveiller un retour sans lui consacrer un écran entier.
+
+| Réglage | |
+|---|---|
+| **Source** | Laisser vide pour reprendre la source de l'écoute, ou en choisir une autre avec 🔍. |
+| **Taille** | Dimensions de la fenêtre en pixels. |
+| **Son** | Volume propre à la fenêtre, à 0 % par défaut pour ne pas doubler l'écoute. |
+| **Toujours au-dessus** | Garde la fenêtre visible par-dessus les autres applications. |
+
+La fenêtre se déplace à la souris. Fermer la fenêtre depuis l'application ou la croix revient au même. Si la source disparaît, l'écoute se relance toute seule dès qu'elle revient. Le panneau est indépendant de la réception : on peut écouter le master sans afficher le moindre flux.
 
 ## Préférences
 
@@ -126,6 +139,7 @@ Le volume se règle sans interrompre le son ; changer de source relance l'écout
 |---|---|
 | **Ne jamais afficher de flux sur l'écran principal** | Réserve l'écran de travail : il n'est pas proposé dans les cartes ni utilisé par Auto-assigner. |
 | **Décodage vidéo** | Processeur (recommandé, tous codecs), ou GPU NVIDIA / Intel / AMD pour soulager le processeur avec beaucoup de flux **H.264**. Seuls les décodeurs disponibles sur le poste sont proposés. |
+| **Émettre en direct par libomt** | Coché par défaut. Décoché, l'écran est capturé et publié par FFmpeg (gdigrab) comme avant la 0.3.4. À essayer si l'image reçue est noire ou figée. |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
 | **Moteur FFmpeg** | Diagnostic des builds FFmpeg détectés et de leurs capacités. |
 | **Fichiers** | Accès aux dossiers de configuration et de journaux ; **Réinitialiser** efface toute la configuration. |
@@ -154,6 +168,7 @@ Le volume se règle sans interrompre le son ; changer de source relance l'écout
 | Source OMT introuvable | Même réseau / VLAN, mDNS autorisé, TCP 6400-6600 ouverts des deux côtés. |
 | Pas de son dans l'émission | Vérifier la source **Audio** ; avec *Son du PC*, le son doit sortir sur la sortie audio par défaut de Windows. |
 | Retour audio muet | La source OMT porte-t-elle bien de l'audio ? Vérifier le **Volume** et la sortie audio par défaut de Windows. Le journal du panneau liste les flux reçus. |
+| Image reçue noire depuis l'émission | Ouvrir le **journal de l'émission** : il indique la zone capturée, le nombre de récepteurs connectés, et signale `L'écran capturé est entièrement noir`. Si ce message apparaît, le problème est à la capture — l'écran est réellement noir, ou son contenu est rendu par le GPU (lecteur vidéo plein écran, jeu) et GDI ne peut pas le relire. Sinon, décocher **Émettre en direct par libomt** dans les Préférences pour comparer avec FFmpeg. |
 | *Aucun ffplay avec support SRT* | Uniquement en lançant depuis les sources sans `bin/standard` : voir [Développement](developpement.md). |
 
 ## Fichiers

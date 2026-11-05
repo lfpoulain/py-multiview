@@ -27,7 +27,9 @@ Ce que cela change par rapport à un passage par FFmpeg :
 | Découverte | un processus `ffmpeg -find_sources`, plusieurs secondes | `omt_discovery_getaddresses()`, la liste mDNS déjà en mémoire |
 | Émission 1080p30, un récepteur | 43 % d'un cœur (mesuré avec `-benchmark`) | 26 % d'un cœur : pas de conversion `swscale` vers UYVY, pas de pipeline de filtres |
 
-La capture d'écran est un `BitBlt` GDI dans une DIB réutilisée (`capture.py`), ce que fait `gdigrab` ; les octets sont déjà en BGRA, le format que `libomt` encode directement en VMX1.
+La capture d'écran est un `BitBlt` GDI dans une DIB réutilisée (`capture.py`), ce que fait `gdigrab` ; les octets sont déjà en BGRA, le format que `libomt` encode directement en VMX1. La zone demandée est ramenée dans le bureau virtuel si elle en sort — avec plusieurs écrans à des échelles différentes, la position annoncée peut tomber à côté, et `BitBlt` ne copie alors rien. Comme GDI ne sait pas relire le contenu rendu par le GPU, l'émission vérifie une fois par seconde que l'image n'est pas uniformément noire et l'écrit dans son journal : cela sépare une capture noire d'un problème de transport.
+
+Le repli FFmpeg reste disponible (Préférences → *Émettre en direct par libomt*), ce qui permet de comparer les deux chaînes sur une même machine.
 
 Les deux tâches tournent sur des threads de l'application plutôt que dans des processus enfants (`native.py`), avec la même surface qu'un processus supervisé : état, relance avec temporisation croissante, journal. Si `libomt.dll` ne se charge pas, `omtlib.available()` est faux et tout repasse par les commandes FFmpeg, qui restent testées.
 
@@ -90,7 +92,9 @@ Quand `libomt` n'est pas chargeable, l'émission repasse par `ffmpeg gdigrab →
 
 ## Retour audio OMT
 
-Le récepteur ne demande que `OMTFrameType_Audio`, donc la connexion vidéo n'est jamais ouverte : aucune trame d'image ne traverse le réseau ni le décodeur. Les échantillons arrivent en float planaire, sont entrelacés et joués par PortAudio, dont l'écriture bloquante cadence la lecture. Le volume est un simple gain appliqué à la volée, sans redémarrer le récepteur.
+La **fenêtre flottante** est un `ffplay -alwaysontop` dimensionné, volume propre, sur la source choisie — le seul lecteur de l'application qui ne prenne pas un écran entier.
+
+Le récepteur audio ne demande que `OMTFrameType_Audio`, donc la connexion vidéo n'est jamais ouverte : aucune trame d'image ne traverse le réseau ni le décodeur. Les échantillons arrivent en float planaire, sont entrelacés et joués par PortAudio, dont l'écriture bloquante cadence la lecture. Le volume est un simple gain appliqué à la volée, sans redémarrer le récepteur.
 
 Le repli FFmpeg est un `ffplay -nodisp -vn`, qui jette les trames vidéo dès le démultiplexage. C'est aussi pourquoi la réception *avec* image reçoit `-infbuf` : OMT transporte la vidéo compressée en VMX1, mais ffplay met en file les trames **décodées**, soit ~4 Mo en 1080p et ~16 Mo en 2160p, alors qu'il plafonne l'ensemble de ses files de paquets à 15 Mo. Sans cela le thread de lecture se met en pause à chaque trame et la file audio se vide.
 

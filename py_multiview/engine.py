@@ -19,6 +19,7 @@ from .ffmpeg import (
     GPU_DECODERS,
     PLAYER_ENV,
     ToolchainRegistry,
+    build_floating_command,
     build_monitor_command,
     build_player_command,
     build_route_command,
@@ -37,6 +38,7 @@ PLAYER = "player:"
 ROUTE = "route:"
 SENDER = "sender"
 MONITOR = "monitor"
+FLOATING = "floating"
 
 NO_SRT_PLAYER = (
     "Aucun ffplay avec support SRT. Installe le FFmpeg standard dans bin/standard "
@@ -72,6 +74,7 @@ class Engine:
         self.desired_routes: set[str] = set()
         self.sender_desired = False
         self.monitor_desired = False
+        self.floating_desired = False
         # OMT jobs running in-process on libomt, keyed like supervised processes.
         self.workers: dict[str, native.NativeWorker] = {}
         self.active_routes: set[str] = set()  # explicitly started or used by a started stream
@@ -139,11 +142,21 @@ class Engine:
         self.monitor_desired = False
         self.reconcile()
 
+    def start_floating(self) -> str | None:
+        self.floating_desired = True
+        self.reconcile()
+        return self.errors.get(FLOATING)
+
+    def stop_floating(self) -> None:
+        self.floating_desired = False
+        self.reconcile()
+
     def shutdown(self) -> None:
         self.desired_streams.clear()
         self.desired_routes.clear()
         self.sender_desired = False
         self.monitor_desired = False
+        self.floating_desired = False
         for worker in self.workers.values():
             worker.stop()
         self.sup.stop_all()
@@ -169,6 +182,9 @@ class Engine:
 
     def monitor_info(self) -> ProcessInfo:
         return self._info(MONITOR, self.monitor_desired)
+
+    def floating_info(self) -> ProcessInfo:
+        return self._info(FLOATING, self.floating_desired)
 
     def _info(self, key: str, desired: bool) -> ProcessInfo:
         if not desired:
@@ -242,6 +258,12 @@ class Engine:
         else:
             self._stop_both(MONITOR)
 
+        if self.floating_desired:
+            spec, error = self._floating_spec()
+            self._apply(FLOATING, spec, error, new_errors)
+        else:
+            self.sup.stop(FLOATING)
+
         self.errors = new_errors
 
     # -- OMT jobs: libomt when available, FFmpeg otherwise -----------------
@@ -276,7 +298,11 @@ class Engine:
         if display is None:
             return self._fail(SENDER, "L'écran à émettre est absent ou débranché.", errors)
 
-        worker = self._worker(SENDER)
+        worker = self._worker(SENDER) if sender.get("native", True) else None
+        if worker is None:
+            existing = self.workers.get(SENDER)
+            if existing is not None:
+                existing.stop()
         if worker is not None:
             source = sender.get("audioSource", "")
             params = (
@@ -429,6 +455,26 @@ class Engine:
             return None, NO_OMT_PLAYER
         args = build_monitor_command(toolchain.ffplay, source, monitor.get("volume", 100))
         return ProcessSpec(args, "Retour audio", progress="ffplay", env=dict(PLAYER_ENV)), None
+
+    def _floating_spec(self) -> tuple[ProcessSpec | None, str | None]:
+        monitor = self.config.get("monitor", {})
+        source = monitor.get("floatSource") or monitor.get("omtSource", "")
+        if not source:
+            return None, "Aucune source OMT à afficher."
+        toolchain = self.tools.player_for("omt")
+        if toolchain is None:
+            return None, NO_OMT_PLAYER
+        args = build_floating_command(
+            toolchain.ffplay,
+            source,
+            width=monitor.get("floatWidth", 640),
+            height=monitor.get("floatHeight", 360),
+            x=monitor.get("floatX", 80),
+            y=monitor.get("floatY", 80),
+            volume=monitor.get("floatVolume", 0),
+            on_top=monitor.get("floatOnTop", True),
+        )
+        return ProcessSpec(args, "Fenêtre de retour", progress="ffplay", env=dict(PLAYER_ENV)), None
 
     def loopback_device(self) -> audio.LoopbackDevice | None:
         """Default playback device for loopback capture (cached: probing opens PortAudio)."""

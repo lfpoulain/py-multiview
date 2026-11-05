@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, omt
+from .. import __version__, omt, omtlib
 from ..config import new_id, normalize_route
 from ..ffmpeg import udp_input_url
 from ..paths import CONFIG_PATH, LOG_PATH
@@ -473,6 +473,21 @@ class PreferencesDialog(QDialog):
         general.body.addLayout(decode_row)
         layout.addWidget(general)
 
+        emission = Section("Émission OMT")
+        self.sender_native = QCheckBox("Émettre en direct par libomt (recommandé)")
+        self.sender_native.setChecked(config["sender"].get("native", True))
+        self.sender_native.setEnabled(omtlib.available())
+        self.sender_native.setToolTip(
+            "Décoché, l'écran est capturé et publié par FFmpeg (gdigrab), comme avant la 0.3.4.\n"
+            "À essayer si l'image reçue est noire ou figée."
+        )
+        emission.body.addWidget(self.sender_native)
+        emission.body.addWidget(
+            label("libomt capture et encode l'image sans processus intermédiaire. "
+                  "Le repli FFmpeg sert à comparer en cas de problème d'image.", "Muted", wrap=True)
+        )
+        layout.addWidget(emission)
+
         startup = Section("Au lancement")
         self.auto_rx = QCheckBox("Démarrer automatiquement la réception")
         self.auto_rx.setChecked(config["autoStartReceiver"])
@@ -545,6 +560,7 @@ class PreferencesDialog(QDialog):
         config = self.main.config
         config["excludePrimaryDisplay"] = self.exclude_primary.isChecked()
         config["receiver"]["decode"] = self.decode.currentData()
+        config["sender"]["native"] = self.sender_native.isChecked()
         config["autoStartReceiver"] = self.auto_rx.isChecked()
         config["autoStartSender"] = self.auto_tx.isChecked()
         self.main.on_preferences_changed()

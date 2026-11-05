@@ -295,6 +295,57 @@ class MainWindow(QMainWindow):
         self.monitor_detail = label("", "Detail", wrap=True)
         self.monitor_detail.hide()
         monitor.body.addWidget(self.monitor_detail)
+
+        monitor.body.addWidget(divider())
+        monitor.body.addWidget(label("Fenêtre flottante", "FieldLabel"))
+        monitor.body.addWidget(
+            label("Petite fenêtre vidéo posée sur le bureau, toujours au-dessus. "
+                  "Vide = la même source que l'écoute.", "Muted", wrap=True)
+        )
+        line = QHBoxLayout()
+        self.float_source = QLineEdit()
+        self.float_source.setPlaceholderText("Source de la fenêtre (facultatif)")
+        self.float_source.editingFinished.connect(self.on_monitor_changed)
+        line.addWidget(self.float_source, 1)
+        find_float = button(variant="icon", icon="search", icon_color=theme.TEXT_DIM,
+                            tooltip="Découvrir les sources OMT du réseau")
+        find_float.clicked.connect(self.discover_float_source)
+        line.addWidget(find_float)
+        monitor.body.addLayout(line)
+        line = QHBoxLayout()
+        line.addWidget(field_label("Taille", 52))
+        self.float_width = spin(160, 7680, 640, suffix=" px", width=86)
+        self.float_width.valueChanged.connect(self.on_monitor_changed)
+        line.addWidget(self.float_width)
+        line.addWidget(label("×", "Muted"))
+        self.float_height = spin(90, 4320, 360, suffix=" px", width=86)
+        self.float_height.valueChanged.connect(self.on_monitor_changed)
+        line.addWidget(self.float_height)
+        line.addStretch(1)
+        monitor.body.addLayout(line)
+        line = QHBoxLayout()
+        line.addWidget(field_label("Son", 52))
+        self.float_volume = spin(0, 100, 0, suffix=" %", width=80)
+        self.float_volume.valueChanged.connect(self.on_monitor_changed)
+        line.addWidget(self.float_volume)
+        self.float_on_top = QCheckBox("Toujours au-dessus")
+        self.float_on_top.setChecked(True)
+        self.float_on_top.stateChanged.connect(self.on_monitor_changed)
+        line.addWidget(self.float_on_top)
+        line.addStretch(1)
+        monitor.body.addLayout(line)
+        actions = QHBoxLayout()
+        self.float_btn = button("Ouvrir la fenêtre", icon="play")
+        self.float_btn.clicked.connect(self.toggle_floating)
+        actions.addWidget(self.float_btn, 1)
+        float_logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM,
+                            tooltip="Journal de la fenêtre de retour")
+        float_logs.clicked.connect(lambda: self.show_logs("floating", "Journal — fenêtre de retour"))
+        actions.addWidget(float_logs)
+        monitor.body.addLayout(actions)
+        self.float_detail = label("", "Detail", wrap=True)
+        self.float_detail.hide()
+        monitor.body.addWidget(self.float_detail)
         col.addWidget(monitor)
         col.addWidget(divider())
 
@@ -724,20 +775,54 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------ audio monitor
 
+    def _monitor_widgets(self) -> tuple:
+        return (
+            self.monitor_source, self.monitor_volume, self.float_source, self.float_width,
+            self.float_height, self.float_volume, self.float_on_top,
+        )
+
     def load_monitor_fields(self) -> None:
         monitor = self.config["monitor"]
-        for w in (self.monitor_source, self.monitor_volume):
+        for w in self._monitor_widgets():
             w.blockSignals(True)
         self.monitor_source.setText(monitor["omtSource"])
         self.monitor_volume.setValue(monitor["volume"])
-        for w in (self.monitor_source, self.monitor_volume):
+        self.float_source.setText(monitor["floatSource"])
+        self.float_width.setValue(monitor["floatWidth"])
+        self.float_height.setValue(monitor["floatHeight"])
+        self.float_volume.setValue(monitor["floatVolume"])
+        self.float_on_top.setChecked(monitor["floatOnTop"])
+        for w in self._monitor_widgets():
             w.blockSignals(False)
 
     def on_monitor_changed(self, *_args) -> None:
         monitor = self.config["monitor"]
         monitor["omtSource"] = self.monitor_source.text().strip()
         monitor["volume"] = self.monitor_volume.value()
+        monitor["floatSource"] = self.float_source.text().strip()
+        monitor["floatWidth"] = self.float_width.value()
+        monitor["floatHeight"] = self.float_height.value()
+        monitor["floatVolume"] = self.float_volume.value()
+        monitor["floatOnTop"] = self.float_on_top.isChecked()
         self.schedule_commit()
+
+    def discover_float_source(self) -> None:
+        toolchain = self.engine.tools.ffmpeg_for("omt")
+        dlg = OMTDiscoveryDialog(self, toolchain.ffmpeg if toolchain else None, self.float_source.text().strip())
+        if dlg.exec() == QDialog.Accepted:
+            self.float_source.setText(dlg.selected_source)
+            self.on_monitor_changed()
+
+    def toggle_floating(self) -> None:
+        self.on_monitor_changed()
+        self.commit()
+        if self.engine.floating_desired:
+            self.engine.stop_floating()
+        else:
+            error = self.engine.start_floating()
+            if error:
+                self.notify(f"⚠ Fenêtre de retour : {error}", 8000)
+        self.on_tick()
 
     def discover_monitor_source(self) -> None:
         toolchain = self.engine.tools.ffmpeg_for("omt")
@@ -837,6 +922,15 @@ class MainWindow(QMainWindow):
             set_button(self.monitor_btn, "Couper le retour", "danger", "stop")
         else:
             set_button(self.monitor_btn, "Écouter", "success", "broadcast")
+
+        floating = self.engine.floating_info()
+        set_state(self.float_detail, floating.status.value)
+        self.float_detail.setText(floating.detail)
+        self.float_detail.setVisible(bool(floating.detail))
+        if self.engine.floating_desired:
+            set_button(self.float_btn, "Fermer la fenêtre", "danger", "stop")
+        else:
+            set_button(self.float_btn, "Ouvrir la fenêtre", "success", "play")
         self._update_routes_status()
 
     def refresh_engine_summary(self) -> None:

@@ -230,6 +230,9 @@ class ScreenSender(NativeWorker):
             self.address = sender.address
             self.append(f"Publié sous « {self.address or name} »")
             with ScreenCapture(x, y, width, height) as screen:
+                self.append(f"Capture {screen.width}x{screen.height} en {x},{y} à {fps} i/s")
+                if screen.clamped:
+                    self.append(f"⚠ {screen.clamped}")
                 pump = _AudioPump(sender, audio_source, self.append) if audio_source else None
                 try:
                     if pump is not None:
@@ -244,6 +247,9 @@ class ScreenSender(NativeWorker):
         start = time.perf_counter()
         index = 0
         misses = 0
+        black_since = 0.0
+        reported_black = False
+        connections = -1
         while not self.stopping():
             # Constant cadence from a fixed origin, so a slow frame does not
             # shift every frame that follows.
@@ -269,6 +275,26 @@ class ScreenSender(NativeWorker):
             if pump is not None:
                 pump.note_video(timestamp)
             self.beat()
+
+            # Say out loud what is being captured: a black picture on the
+            # receiving end is either black here already (nothing to capture,
+            # or a window GDI cannot read back) or a problem further down.
+            if index % max(1, fps) == 0:
+                now = time.perf_counter()
+                if screen.looks_black():
+                    black_since = black_since or now
+                    if not reported_black and now - black_since > 3.0:
+                        self.append("⚠ L'écran capturé est entièrement noir (la source est noire, "
+                                    "ou son contenu est rendu par le GPU et illisible par GDI).")
+                        reported_black = True
+                else:
+                    if reported_black:
+                        self.append("Image de nouveau visible.")
+                    black_since, reported_black = 0.0, False
+                live = sender.connections
+                if live != connections:
+                    connections = live
+                    self.append(f"{live} connexion(s) de récepteurs")
 
 
 class _AudioPump:

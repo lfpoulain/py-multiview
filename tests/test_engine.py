@@ -232,6 +232,40 @@ def test_native_sender_publishes_the_screen_geometry():
     assert "sender" not in engine.sup.running
 
 
+def test_sender_can_be_forced_back_onto_ffmpeg():
+    engine = make_engine(
+        {"sender": {"displayId": "side", "name": "Régie", "native": False}}, native=True
+    )
+    assert engine.start_sender() is None
+    # The libomt worker must stay out of the way, and gdigrab take over.
+    assert not engine.fake_workers.get("sender", FakeWorker("sender")).running
+    args = engine.sup.running["sender"].args
+    assert "gdigrab" in args and "libomt" in args
+
+
+def test_floating_window_uses_the_listening_source_by_default():
+    engine = make_engine({"monitor": {"omtSource": "RÉGIE (Master)", "floatWidth": 800}})
+    assert engine.start_floating() is None
+    args = engine.sup.running["floating"].args
+    assert args[-4:] == ["-f", "libomt", "-i", "RÉGIE (Master)"]
+    assert args[args.index("-x") + 1] == "800"
+    assert "-alwaysontop" in args and "-fs" not in args
+
+
+def test_floating_window_can_watch_another_source():
+    engine = make_engine(
+        {"monitor": {"omtSource": "RÉGIE (Master)", "floatSource": "CAM (Plateau)",
+                     "floatOnTop": False, "floatVolume": 25}}
+    )
+    assert engine.start_floating() is None
+    args = engine.sup.running["floating"].args
+    assert args[-1] == "CAM (Plateau)"
+    assert args[args.index("-volume") + 1] == "25"
+    assert "-alwaysontop" not in args
+    engine.stop_floating()
+    assert "floating" not in engine.sup.running
+
+
 def test_native_sender_reports_a_missing_audio_input():
     engine = make_engine(
         {"sender": {"displayId": "side", "audioSource": "dshow:Absent"}}, native=True

@@ -121,6 +121,8 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
     pixel_format = _str(sender.get("pixelFormat"), "uyvy422").lower()
     sender["pixelFormat"] = pixel_format if pixel_format in OMT_PIXEL_FORMATS else "uyvy422"
     sender["clockOutput"] = bool(sender.get("clockOutput", False))
+    # False forces the FFmpeg/gdigrab sender even when libomt is available.
+    sender["native"] = bool(sender.get("native", True))
     # "" (no audio) | "loopback" (what the PC plays) | "in:<device>" | "dshow:<device>" (legacy)
     audio = _str(sender.get("audioSource"))
     valid = audio in ("", "loopback") or audio.startswith(("in:", "dshow:"))
@@ -139,10 +141,17 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
 
 
 def normalize_monitor(raw: dict) -> dict:
-    """Audio-only OMT listening: the master return heard on this PC."""
+    """The OMT return: heard on this PC, and optionally shown in a small window."""
     monitor = dict(raw)
     monitor["omtSource"] = _str(monitor.get("omtSource"))
     monitor["volume"] = _int(monitor.get("volume"), 100, 0, 100)
+    monitor["floatSource"] = _str(monitor.get("floatSource"))
+    monitor["floatWidth"] = _int(monitor.get("floatWidth"), 640, 160, 7680)
+    monitor["floatHeight"] = _int(monitor.get("floatHeight"), 360, 90, 4320)
+    monitor["floatX"] = _int(monitor.get("floatX"), 80)
+    monitor["floatY"] = _int(monitor.get("floatY"), 80)
+    monitor["floatVolume"] = _int(monitor.get("floatVolume"), 0, 0, 100)
+    monitor["floatOnTop"] = bool(monitor.get("floatOnTop", True))
     return monitor
 
 

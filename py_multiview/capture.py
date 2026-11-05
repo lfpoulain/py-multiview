@@ -20,6 +20,11 @@ BI_RGB = 0
 CURSOR_SHOWING = 0x00000001
 DI_NORMAL = 0x0003
 
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
 
 class BITMAPINFOHEADER(ctypes.Structure):
     _fields_ = [
@@ -112,6 +117,7 @@ class ScreenCapture:
         _prototypes(self._user32, self._gdi32)
         # Physical pixels, like the Win32 screen enumeration the geometry comes from.
         self._user32.SetProcessDPIAware()
+        self.clamped = self._clamp_to_desktop()
 
         self._screen_dc = self._user32.GetDC(None)
         if not self._screen_dc:
@@ -139,6 +145,51 @@ class ScreenCapture:
             raise OSError("CreateDIBSection a échoué")
         self._old = self._gdi32.SelectObject(self._mem_dc, self._bitmap)
         self.size = self.stride * self.height
+
+    def _clamp_to_desktop(self) -> str:
+        """Keep the rectangle inside the virtual desktop.
+
+        With mixed DPI scaling, the position reported for a screen can land
+        slightly outside it; BitBlt then copies nothing and every frame comes
+        out black. Returns a description when the rectangle had to move.
+        """
+        vx = self._user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        vy = self._user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        vw = self._user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        vh = self._user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+        if vw <= 0 or vh <= 0:
+            return ""
+        before = (self.x, self.y, self.width, self.height)
+        self.width = max(2, min(self.width, vw))
+        self.height = max(2, min(self.height, vh))
+        self.x = max(vx, min(self.x, vx + vw - self.width))
+        self.y = max(vy, min(self.y, vy + vh - self.height))
+        self.stride = self.width * 4
+        if before == (self.x, self.y, self.width, self.height):
+            return ""
+        return (
+            f"zone {before[2]}x{before[3]}+{before[0]}+{before[1]} hors du bureau "
+            f"({vw}x{vh}+{vx}+{vy}), ramenée à {self.width}x{self.height}+{self.x}+{self.y}"
+        )
+
+    def looks_black(self, samples: int = 400) -> bool:
+        """True when the last grabbed frame carries no visible light.
+
+        GDI cannot read back content drawn by some hardware-accelerated or
+        protected windows, which comes out as a black rectangle.
+        """
+        if not self._bits:
+            return True
+        step_y = max(1, self.height // 20)
+        step_x = max(1, self.width // max(1, samples // 20))
+        data = ctypes.cast(self._bits, ctypes.POINTER(ctypes.c_ubyte))
+        for y in range(0, self.height, step_y):
+            row = y * self.stride
+            for x in range(0, self.width, step_x):
+                o = row + x * 4
+                if data[o] > 8 or data[o + 1] > 8 or data[o + 2] > 8:
+                    return False
+        return True
 
     def grab(self) -> ctypes.c_void_p | None:
         """Blit the screen into the DIB; returns the pixel pointer (not a copy)."""
