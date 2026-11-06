@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -47,6 +47,7 @@ def button(
     icon_color: str = theme.TEXT,
     tooltip: str = "",
     large: bool = False,
+    small: bool = False,
 ) -> QPushButton:
     btn = QPushButton(text)
     btn.setCursor(Qt.PointingHandCursor)
@@ -54,6 +55,8 @@ def button(
         btn.setProperty("variant", variant)
     if large:
         btn.setProperty("size", "large")
+    elif small:
+        btn.setProperty("size", "small")
     if icon:
         btn.setIcon(theme.icon(icon, icon_color))
         btn.setIconSize(QSize(16, 16))
@@ -144,3 +147,136 @@ class Section(QWidget):
 
     def add_action(self, widget: QWidget) -> None:
         self.header.addWidget(widget)
+
+
+class ElidedLabel(QLabel):
+    """One-line label that cuts its text with « … » instead of widening the layout."""
+
+    def __init__(self, text: str = "", name: str | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        if name:
+            self.setObjectName(name)
+        self._full = ""
+        # Ignored: the text length must never decide the width of a column.
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+        self.set_full_text(text)
+
+    def set_full_text(self, text: str) -> None:
+        self._full = text or ""
+        self._fit()
+
+    def full_text(self) -> str:
+        return self._full
+
+    def _fit(self) -> None:
+        shown = self.fontMetrics().elidedText(self._full, Qt.ElideRight, max(8, self.width() - 2))
+        if shown != self.text():
+            super().setText(shown)
+        self.setToolTip(self._full if shown != self._full else "")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit()
+
+
+class _SectionHead(QFrame):
+    """Clickable header row of a collapsible section."""
+
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("SectionHead")
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class CollapsibleSection(QWidget):
+    """A section that folds to its header.
+
+    The header stays useful when folded: it carries the section's status and
+    primary action (``add_action``) and a one-line summary of the current
+    settings or of the problem, so a long sidebar can be reduced to a short
+    list of lines without hiding what is running.
+    """
+
+    toggled = Signal(bool)
+
+    def __init__(self, title: str, key: str, expanded: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.key = key
+        self._expanded = expanded
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Two rows: title and action on top, then the summary on the full width
+        # (beside the button it would be cut after a few words).
+        self.head = _SectionHead()
+        stack = QVBoxLayout(self.head)
+        stack.setContentsMargins(0, 6, 0, 6)
+        stack.setSpacing(3)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self._chevron = QLabel()
+        self._chevron.setFixedSize(14, 14)
+        self._chevron.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(self._chevron)
+        self.title = label(title.upper(), "SectionTitle")
+        self.title.setAttribute(Qt.WA_TransparentForMouseEvents)
+        row.addWidget(self.title)
+        row.addStretch(1)
+        self.actions = QHBoxLayout()
+        self.actions.setSpacing(6)
+        row.addLayout(self.actions)
+        stack.addLayout(row)
+
+        under = QHBoxLayout()
+        under.setContentsMargins(22, 0, 0, 0)
+        self.summary = ElidedLabel("", "Detail")
+        self.summary.setAttribute(Qt.WA_TransparentForMouseEvents)
+        under.addWidget(self.summary)
+        stack.addLayout(under)
+        outer.addWidget(self.head)
+
+        self.content = QWidget()
+        self.content.setObjectName("Transparent")
+        self.body = QVBoxLayout(self.content)
+        self.body.setContentsMargins(22, 2, 0, 8)
+        self.body.setSpacing(8)
+        outer.addWidget(self.content)
+
+        self.head.clicked.connect(self.toggle)
+        self._apply()
+
+    def add_action(self, widget: QWidget) -> None:
+        self.actions.addWidget(widget)
+
+    def set_summary(self, text: str, state: str = "") -> None:
+        self.summary.set_full_text(text)
+        set_state(self.summary, state or "stopped")
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool, *, notify: bool = True) -> None:
+        if expanded == self._expanded:
+            return
+        self._expanded = expanded
+        self._apply()
+        if notify:
+            self.toggled.emit(expanded)
+
+    def toggle(self) -> None:
+        self.set_expanded(not self._expanded)
+
+    def _apply(self) -> None:
+        self.content.setVisible(self._expanded)
+        self._chevron.setPixmap(theme.pixmap("chevron" if self._expanded else "chevron-right",
+                                             theme.TEXT_DIM, 14))

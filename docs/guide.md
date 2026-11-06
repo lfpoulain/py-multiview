@@ -29,14 +29,22 @@ Tout est inclus, FFmpeg compris. Une seule instance peut tourner à la fois : re
 | Zone | Rôle |
 |---|---|
 | **En-tête** | Version, adresse IP du poste (celle à donner à la régie), nombre de flux en direct, état de l'émission OMT, bouton **Démarrer / Arrêter la réception**. |
+| **Barre latérale** | Cinq blocs repliables, décrits ci-dessous. Cliquer sur un titre l'ouvre ou le replie ; l'état est retenu d'un lancement à l'autre. |
 | **Écrans** | Écrans détectés avec leur résolution. Double-clic pour renommer. **Identifier** affiche le nom de chaque écran en grand sur l'écran lui-même. **Auto-assigner** donne un écran libre à chaque flux et crée les flux manquants. |
 | **Émission OMT** | Publication d'un écran du poste sur le réseau. |
-| **Retour audio OMT** | Écoute du son d'une source OMT sur ce poste, sans image. |
+| **Retour audio** | Écoute du son d'une source OMT sur ce poste, sans image. |
+| **Fenêtre de retour** | Petite fenêtre vidéo flottante sur une source OMT. |
 | **Routage multicast** | État des routes ; **Gérer** ouvre leur configuration. |
 | **Flux entrants** | Une carte par flux : aperçu, état, source, écran et options d'affichage. |
 | **Barre d'état** | Messages, et état des builds FFmpeg (clic pour le diagnostic). |
 
-Chaque carte affiche un état :
+### Les blocs repliés restent utiles
+
+Un bloc replié garde son **bouton principal** (Émettre, Écouter, Ouvrir…) et une **ligne de résumé** sous son titre : l'écran, la cadence et le son pour l'émission, la source et le volume pour le retour. Cette ligne dit aussi ce qui ne va pas, sans qu'il faille déplier : en **rouge** pour une erreur (avec le message), en **orange** quand le bloc attend quelque chose. Le message complet apparaît en infobulle.
+
+Chaque bloc déplié a son **Journal** en bas.
+
+Chaque carte de flux affiche un état :
 
 | État | Signification |
 |---|---|
@@ -126,7 +134,7 @@ La liste propose les programmes qui ont une fenêtre ouverte. Quelques points à
 
 ## Écouter le retour du master
 
-Le panneau **Retour audio OMT** lit le son d'une source OMT sur la sortie audio du poste, **sans ouvrir de fenêtre et sans recevoir l'image** : l'application ne demande à la source que ses trames audio, donc la vidéo ne traverse même pas le réseau. De quoi garder le master de la régie à l'oreille pendant qu'on travaille, sans mobiliser un écran ni de bande passante.
+Le bloc **Retour audio** lit le son d'une source OMT sur la sortie audio du poste, **sans ouvrir de fenêtre et sans recevoir l'image** : l'application ne demande à la source que ses trames audio, donc la vidéo ne traverse même pas le réseau. De quoi garder le master de la régie à l'oreille pendant qu'on travaille, sans mobiliser un écran ni de bande passante.
 
 1. Saisir le nom de la source, ou cliquer sur 🔍 pour la choisir parmi celles découvertes sur le réseau.
 2. Régler le **Volume** (0 à 100 %).
@@ -136,7 +144,7 @@ Le volume se règle sans interrompre le son ; changer de source relance l'écout
 
 ### Fenêtre flottante
 
-Sous les réglages d'écoute, **Fenêtre flottante** ouvre une petite fenêtre vidéo posée sur le bureau, toujours au-dessus des autres, pour surveiller un retour sans lui consacrer un écran entier.
+Le bloc **Fenêtre de retour** ouvre une petite fenêtre vidéo posée sur le bureau, toujours au-dessus des autres, pour surveiller un retour sans lui consacrer un écran entier.
 
 | Réglage | |
 |---|---|

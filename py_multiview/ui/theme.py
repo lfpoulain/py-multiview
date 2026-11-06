@@ -56,6 +56,7 @@ _ICONS = {
     "broadcast": '<circle cx="12" cy="12" r="2"/><path d="M8 8a5.6 5.6 0 0 0 0 8M16 8a5.6 5.6 0 0 1 0 8M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/>',
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "chevron": '<path d="M6 9l6 6 6-6"/>',
+    "chevron-right": '<path d="M9 6l6 6-6 6"/>',
     "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
 }
 
@@ -174,6 +175,9 @@ QPushButton[variant="icon"] {{
 }}
 QPushButton[variant="icon"]:hover {{ background: #262b3a; }}
 QPushButton[size="large"] {{ padding: 9px 20px; font-size: 13px; }}
+QPushButton[size="small"] {{ padding: 3px 10px; min-height: 18px; font-size: 12px; }}
+QFrame#SectionHead {{ background: transparent; border: none; }}
+QFrame#SectionHead:hover QLabel#SectionTitle {{ color: {TEXT}; }}
 
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit {{
     background: {FIELD}; border: 1px solid {BORDER}; border-radius: 7px;

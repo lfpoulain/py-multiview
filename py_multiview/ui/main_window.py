@@ -39,7 +39,17 @@ from . import theme
 from .dialogs import LogDialog, OMTDiscoveryDialog, PreferencesDialog, RoutesDialog, ScreenIdentifier
 from .preview import PreviewDialog, grab_display
 from .stream_card import StreamCard
-from .widgets import Section, StatusPill, button, divider, field_label, label, set_button, set_state, spin
+from .widgets import (
+    STATUS_TEXT,
+    CollapsibleSection,
+    button,
+    divider,
+    field_label,
+    label,
+    set_button,
+    set_state,
+    spin,
+)
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +89,7 @@ class MainWindow(QMainWindow):
         self.load_sender_fields()
         self.load_monitor_fields()
         self.refresh_routes_list()
+        self._apply_sidebar_state()
         self.refresh_engine_summary()
         self.engine.update(self.config, self.displays)
 
@@ -189,12 +200,36 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setObjectName("Transparent")
         col = QVBoxLayout(content)
-        col.setContentsMargins(16, 10, 12, 10)
-        col.setSpacing(16)
+        col.setContentsMargins(16, 8, 12, 10)
+        col.setSpacing(2)
+
+        # Each block folds to a header that carries its primary action and a
+        # one-line summary: the column stays short and nothing running is hidden.
+        self.sections: dict[str, CollapsibleSection] = {}
+        self._section_defaults: dict[str, bool] = {}
+
+        def section(key: str, title: str, expanded: bool, tip: str = "") -> CollapsibleSection:
+            self._section_defaults[key] = expanded
+            sec = CollapsibleSection(title, key, expanded)
+            if tip:
+                sec.head.setToolTip(tip)
+            sec.toggled.connect(lambda state, k=key: self._on_section_toggled(k, state))
+            self.sections[key] = sec
+            return sec
+
+        def footer(sec: CollapsibleSection, detail: QLabel, key: str, title: str) -> None:
+            sec.body.addWidget(detail)
+            row = QHBoxLayout()
+            row.addStretch(1)
+            logs = button("Journal", variant="ghost", icon="logs", icon_color=theme.TEXT_DIM, small=True,
+                          tooltip=f"Journal : {title.lower()}")
+            logs.clicked.connect(lambda: self.show_logs(key, f"Journal — {title.lower()}"))
+            row.addWidget(logs)
+            sec.body.addLayout(row)
 
         # Screens.
-        screens = Section("Écrans")
-        identify = button("Identifier", variant="ghost", icon="identify", icon_color=theme.TEXT_DIM,
+        screens = section("screens", "Écrans", True)
+        identify = button("Identifier", variant="ghost", icon="identify", icon_color=theme.TEXT_DIM, small=True,
                           tooltip="Affiche le nom de chaque écran sur l'écran lui-même")
         identify.clicked.connect(self.identify_screens)
         screens.add_action(identify)
@@ -215,10 +250,11 @@ class MainWindow(QMainWindow):
         col.addWidget(divider())
 
         # OMT sender.
-        sender = Section("Émission OMT")
-        self.sender_pill = StatusPill()
-        sender.add_action(self.sender_pill)
-        sender.body.addWidget(label("Publie un écran de ce poste comme source OMT sur le réseau.", "Muted", wrap=True))
+        sender = section("sender", "Émission OMT", False,
+                         "Publie un écran de ce poste comme source OMT sur le réseau.")
+        self.sender_btn = button("Émettre", variant="success", icon="broadcast", icon_color="#ffffff", small=True)
+        self.sender_btn.clicked.connect(self.toggle_sender)
+        sender.add_action(self.sender_btn)
         self.sender_display = QComboBox()
         self.sender_name = QLineEdit()
         self.sender_name.setPlaceholderText("Nom publié sur le réseau")
@@ -259,25 +295,18 @@ class MainWindow(QMainWindow):
         self.sender_format.currentIndexChanged.connect(self.on_sender_changed)
         self.sender_clock.toggled.connect(self.on_sender_changed)
         self.sender_audio.currentIndexChanged.connect(self.on_sender_changed)
-        actions = QHBoxLayout()
-        self.sender_btn = button("Émettre", variant="success", icon="broadcast", icon_color="#ffffff")
-        self.sender_btn.clicked.connect(self.toggle_sender)
-        actions.addWidget(self.sender_btn, 1)
-        sender_logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM, tooltip="Journal de l'émission")
-        sender_logs.clicked.connect(lambda: self.show_logs("sender", "Journal — émission OMT"))
-        actions.addWidget(sender_logs)
-        sender.body.addLayout(actions)
         self.sender_detail = label("", "Detail", wrap=True)
         self.sender_detail.hide()
-        sender.body.addWidget(self.sender_detail)
+        footer(sender, self.sender_detail, "sender", "Émission OMT")
         col.addWidget(sender)
         col.addWidget(divider())
 
         # Audio-only OMT return.
-        monitor = Section("Retour audio OMT")
-        self.monitor_pill = StatusPill()
-        monitor.add_action(self.monitor_pill)
-        monitor.body.addWidget(label("Écoute le son d'une source OMT sur ce poste, sans image.", "Muted", wrap=True))
+        monitor = section("monitor", "Retour audio", False,
+                          "Écoute le son d'une source OMT sur ce poste, sans image.")
+        self.monitor_btn = button("Écouter", variant="success", icon="broadcast", icon_color="#ffffff", small=True)
+        self.monitor_btn.clicked.connect(self.toggle_monitor)
+        monitor.add_action(self.monitor_btn)
         line = QHBoxLayout()
         self.monitor_source = QLineEdit()
         self.monitor_source.setPlaceholderText("MACHINE (Nom de la source)")
@@ -295,34 +324,29 @@ class MainWindow(QMainWindow):
         line.addWidget(self.monitor_volume)
         line.addStretch(1)
         monitor.body.addLayout(line)
-        actions = QHBoxLayout()
-        self.monitor_btn = button("Écouter", icon="broadcast")
-        self.monitor_btn.clicked.connect(self.toggle_monitor)
-        actions.addWidget(self.monitor_btn, 1)
-        monitor_logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM, tooltip="Journal du retour audio")
-        monitor_logs.clicked.connect(lambda: self.show_logs("monitor", "Journal — retour audio OMT"))
-        actions.addWidget(monitor_logs)
-        monitor.body.addLayout(actions)
         self.monitor_detail = label("", "Detail", wrap=True)
         self.monitor_detail.hide()
-        monitor.body.addWidget(self.monitor_detail)
+        footer(monitor, self.monitor_detail, "monitor", "Retour audio")
+        col.addWidget(monitor)
+        col.addWidget(divider())
 
-        monitor.body.addWidget(divider())
-        monitor.body.addWidget(label("Fenêtre flottante", "FieldLabel"))
-        monitor.body.addWidget(
-            label("Petite fenêtre vidéo posée sur le bureau, toujours au-dessus. "
-                  "Vide = la même source que l'écoute.", "Muted", wrap=True)
-        )
+        # Floating video return: its own block, it used to hide inside the audio one.
+        floating = section("floating", "Fenêtre de retour", False,
+                           "Petite fenêtre vidéo posée sur le bureau, toujours au-dessus. "
+                           "Vide = la même source que l'écoute.")
+        self.float_btn = button("Ouvrir", variant="success", icon="play", icon_color="#ffffff", small=True)
+        self.float_btn.clicked.connect(self.toggle_floating)
+        floating.add_action(self.float_btn)
         line = QHBoxLayout()
         self.float_source = QLineEdit()
-        self.float_source.setPlaceholderText("Source de la fenêtre (facultatif)")
+        self.float_source.setPlaceholderText("Source (vide = celle de l'écoute)")
         self.float_source.editingFinished.connect(self.on_monitor_changed)
         line.addWidget(self.float_source, 1)
         find_float = button(variant="icon", icon="search", icon_color=theme.TEXT_DIM,
                             tooltip="Découvrir les sources OMT du réseau")
         find_float.clicked.connect(self.discover_float_source)
         line.addWidget(find_float)
-        monitor.body.addLayout(line)
+        floating.body.addLayout(line)
         line = QHBoxLayout()
         line.addWidget(field_label("Taille", 52))
         self.float_width = spin(160, 7680, 640, suffix=" px", width=86)
@@ -333,7 +357,7 @@ class MainWindow(QMainWindow):
         self.float_height.valueChanged.connect(self.on_monitor_changed)
         line.addWidget(self.float_height)
         line.addStretch(1)
-        monitor.body.addLayout(line)
+        floating.body.addLayout(line)
         line = QHBoxLayout()
         line.addWidget(field_label("Son", 52))
         self.float_volume = spin(0, 100, 0, suffix=" %", width=80)
@@ -344,25 +368,16 @@ class MainWindow(QMainWindow):
         self.float_on_top.stateChanged.connect(self.on_monitor_changed)
         line.addWidget(self.float_on_top)
         line.addStretch(1)
-        monitor.body.addLayout(line)
-        actions = QHBoxLayout()
-        self.float_btn = button("Ouvrir la fenêtre", icon="play")
-        self.float_btn.clicked.connect(self.toggle_floating)
-        actions.addWidget(self.float_btn, 1)
-        float_logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM,
-                            tooltip="Journal de la fenêtre de retour")
-        float_logs.clicked.connect(lambda: self.show_logs("floating", "Journal — fenêtre de retour"))
-        actions.addWidget(float_logs)
-        monitor.body.addLayout(actions)
+        floating.body.addLayout(line)
         self.float_detail = label("", "Detail", wrap=True)
         self.float_detail.hide()
-        monitor.body.addWidget(self.float_detail)
-        col.addWidget(monitor)
+        footer(floating, self.float_detail, "floating", "Fenêtre de retour")
+        col.addWidget(floating)
         col.addWidget(divider())
 
         # Routes.
-        routes = Section("Routage multicast")
-        manage = button("Gérer", variant="ghost", icon="route", icon_color=theme.TEXT_DIM)
+        routes = section("routes", "Routage multicast", False)
+        manage = button("Gérer", variant="ghost", icon="route", icon_color=theme.TEXT_DIM, small=True)
         manage.clicked.connect(self.open_routes)
         routes.add_action(manage)
         self.routes_list = QListWidget()
@@ -967,24 +982,22 @@ class MainWindow(QMainWindow):
             set_button(self.reception_btn, "Démarrer la réception", "success", "play")
 
         sender = self.engine.sender_info()
-        self.sender_pill.set_status(sender.status, "Émission" if sender.status == Status.ACTIVE else None)
         self.sender_chip.setText("OMT  en émission" if sender.status == Status.ACTIVE else "OMT  arrêté")
         set_state(self.sender_chip, "active" if sender.status == Status.ACTIVE else "stopped")
         set_state(self.sender_detail, sender.status.value)
         self.sender_detail.setText(sender.detail)
         self.sender_detail.setVisible(bool(sender.detail))
         if self.engine.sender_desired:
-            set_button(self.sender_btn, "Arrêter l'émission", "danger", "stop")
+            set_button(self.sender_btn, "Arrêter", "danger", "stop")
         else:
             set_button(self.sender_btn, "Émettre", "success", "broadcast")
 
         monitor = self.engine.monitor_info()
-        self.monitor_pill.set_status(monitor.status, "Écoute" if monitor.status == Status.ACTIVE else None)
         set_state(self.monitor_detail, monitor.status.value)
         self.monitor_detail.setText(monitor.detail)
         self.monitor_detail.setVisible(bool(monitor.detail))
         if self.engine.monitor_desired:
-            set_button(self.monitor_btn, "Couper le retour", "danger", "stop")
+            set_button(self.monitor_btn, "Couper", "danger", "stop")
         else:
             set_button(self.monitor_btn, "Écouter", "success", "broadcast")
 
@@ -993,10 +1006,79 @@ class MainWindow(QMainWindow):
         self.float_detail.setText(floating.detail)
         self.float_detail.setVisible(bool(floating.detail))
         if self.engine.floating_desired:
-            set_button(self.float_btn, "Fermer la fenêtre", "danger", "stop")
+            set_button(self.float_btn, "Fermer", "danger", "stop")
         else:
-            set_button(self.float_btn, "Ouvrir la fenêtre", "success", "play")
+            set_button(self.float_btn, "Ouvrir", "success", "play")
         self._update_routes_status()
+        self._refresh_summaries(sender, monitor, floating)
+
+    # --------------------------------------------------------- sidebar
+
+    def _apply_sidebar_state(self) -> None:
+        """Restore which blocks were folded; blocks never touched keep their default."""
+        saved = self.config.get("sidebar", {})
+        for key, sec in self.sections.items():
+            sec.set_expanded(saved.get(key, self._section_defaults[key]), notify=False)
+        self._refresh_summaries()
+
+    def _on_section_toggled(self, key: str, expanded: bool) -> None:
+        self.config.setdefault("sidebar", {})[key] = expanded
+        self.schedule_commit()
+        self._refresh_summaries()
+
+    def _summary(self, key: str, info, settings: str) -> tuple[str, str]:
+        """Folded: say what is wrong, else what is set. Open: the body already says it."""
+        sec = self.sections[key]
+        status = info.status if info is not None else Status.STOPPED
+        if not sec.is_expanded() and info is not None and info.detail:
+            return info.detail, status.value
+        if status in (Status.WAITING, Status.STARTING, Status.RETRYING, Status.ERROR, Status.ACTIVE):
+            return f"{STATUS_TEXT[status]}  ·  {settings}", status.value
+        return settings, "stopped"
+
+    def _refresh_summaries(self, sender=None, monitor=None, floating=None) -> None:
+        if not hasattr(self, "sections"):
+            return
+        engine = self.engine
+        sender = sender or engine.sender_info()
+        monitor = monitor or engine.monitor_info()
+        floating = floating or engine.floating_info()
+        cfg = self.config
+
+        count = len(self.displays)
+        self.sections["screens"].set_summary(f"{count} écran{'s' if count > 1 else ''} détecté{'s' if count > 1 else ''}")
+
+        audio_text = self.sender_audio.currentText() or "Sans son"
+        screen_text = self.sender_display.currentText() if self.sender_display.currentData() else "aucun écran"
+        text, state = self._summary(
+            "sender", sender,
+            f"{screen_text}  ·  {cfg['sender']['fps']} i/s  ·  {audio_text}",
+        )
+        self.sections["sender"].set_summary(text, state)
+
+        monitor_cfg = cfg["monitor"]
+        text, state = self._summary(
+            "monitor", monitor,
+            f"{monitor_cfg['omtSource'] or 'aucune source'}  ·  {monitor_cfg['volume']} %",
+        )
+        self.sections["monitor"].set_summary(text, state)
+
+        source = monitor_cfg["floatSource"] or monitor_cfg["omtSource"] or "aucune source"
+        text, state = self._summary(
+            "floating", floating,
+            f"{source}  ·  {monitor_cfg['floatWidth']}×{monitor_cfg['floatHeight']}",
+        )
+        self.sections["floating"].set_summary(text, state)
+
+        routes = cfg["routes"]
+        running = sum(1 for r in routes if r["id"] in engine.active_routes)
+        if not routes:
+            route_text = "aucune route"
+        else:
+            route_text = f"{len(routes)} route{'s' if len(routes) > 1 else ''}"
+            if running:
+                route_text += f"  ·  {running} active{'s' if running > 1 else ''}"
+        self.sections["routes"].set_summary(route_text, "active" if running else "stopped")
 
     def refresh_engine_summary(self) -> None:
         tools = self.engine.tools
@@ -1044,6 +1126,7 @@ class MainWindow(QMainWindow):
         self.load_sender_fields()
         self.load_monitor_fields()
         self.refresh_routes_list()
+        self._apply_sidebar_state()
         self.commit()
         self.notify("Configuration réinitialisée.")
         return True
