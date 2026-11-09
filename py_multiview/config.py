@@ -231,6 +231,12 @@ def normalize_config(config) -> dict:
     api["localOnly"] = bool(api.get("localOnly", False))
     config["api"] = api
 
+    updates = config.get("updates")
+    updates = dict(updates) if isinstance(updates, dict) else {}
+    updates["autoCheck"] = bool(updates.get("autoCheck", True))
+    updates["skipped"] = _str(updates.get("skipped"))  # version the user chose to ignore
+    config["updates"] = updates
+
     receiver = config.get("receiver")
     receiver = dict(receiver) if isinstance(receiver, dict) else {}
     decode = _str(receiver.get("decode"), "cpu").lower()

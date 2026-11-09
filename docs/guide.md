@@ -24,6 +24,17 @@ Télécharger l'une des deux versions depuis la [dernière release](https://gith
 
 Tout est inclus, FFmpeg compris. Une seule instance peut tourner à la fois : relancer l'application ramène simplement la fenêtre existante au premier plan.
 
+### Mises à jour
+
+Au lancement, puis toutes les 6 heures, l'application regarde s'il existe une release plus récente sur GitHub. Si oui, un bouton **Mise à jour X.Y.Z** apparaît dans l'en-tête ; **Préférences → Mises à jour → Rechercher maintenant** fait la même vérification à la demande.
+
+La fenêtre de mise à jour montre les nouveautés, puis **Installer et redémarrer** télécharge la nouvelle version (empreinte SHA-256 vérifiée), ferme l'application et la relance une fois à jour. Les flux et l'émission sont coupés quelques secondes.
+
+- **Installeur** : le nouvel installeur s'exécute sans assistant ; Windows peut demander une autorisation.
+- **Portable** : les fichiers du dossier sont remplacés sur place. Si le dossier n'est pas modifiable, seule la page de la release est proposée.
+
+**Ignorer cette version** masque le bouton jusqu'à la version suivante. Rien n'est jamais installé sans clic.
+
 ## L'interface
 
 | Zone | Rôle |
@@ -175,6 +186,7 @@ L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-liv
 | **Décodage vidéo** | Processeur (recommandé, tous codecs), ou GPU NVIDIA / Intel / AMD pour soulager le processeur avec beaucoup de flux **H.264**. Seuls les décodeurs disponibles sur le poste sont proposés. |
 | **Émettre en direct par libomt** | **Décoché par défaut** : l'écran est capturé et publié par FFmpeg (gdigrab), le chemin éprouvé. Coché, libomt émet sans processus intermédiaire — plus léger, mais l'image est noire sur certaines machines. |
 | **Pilotage à distance** | Ouvre l'API HTTP locale, son port, et la restriction à ce poste. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
+| **Mises à jour** | Recherche automatique des nouvelles versions, et vérification à la demande. Voir [Mises à jour](#mises-à-jour). |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
 | **Moteur FFmpeg** | Diagnostic des builds FFmpeg détectés et de leurs capacités. |
 | **Fichiers** | Accès aux dossiers de configuration et de journaux ; **Réinitialiser** efface toute la configuration. |

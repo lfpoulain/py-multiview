@@ -66,6 +66,8 @@ Il n'y a rien à faire à la main. Le workflow [Build & release](../.github/work
 
 Les noms des fichiers publiés sont fixes (`py-multiview-setup.exe`, `py-multiview-portable.zip`). Les liens `releases/latest/download/…` du README pointent donc toujours vers la dernière version.
 
+Ces noms fixes servent aussi à la mise à jour intégrée ([`updater.py`](../py_multiview/updater.py)) : elle lit `releases/latest` via l'API GitHub (sans jeton, le dépôt doit donc être public), compare le tag à `__version__`, puis télécharge l'installeur ou le zip portable selon la façon dont l'app est installée (présence de `unins000.exe`). L'installeur est lancé avec `/SILENT /RELAUNCH` ; `/RELAUNCH` est lu par la section `[Code]` de [`installer.iss`](../scripts/installer.iss) pour relancer l'app. Ne pas renommer ces fichiers ni retirer ce paramètre sans adapter les deux côtés.
+
 ## Mettre à jour FFmpeg
 
 - **Standard** : modifier `scripts/ffmpeg-standard.json` (version, URL, `sha256`). Quand l'empreinte est vide, le script affiche celle qu'il a obtenue, à reporter dans le fichier. Le cache de la CI est indexé sur ce fichier.

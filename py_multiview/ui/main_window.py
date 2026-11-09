@@ -8,6 +8,7 @@ import threading
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio, omtlib, proc_audio
+from .. import APP_NAME, __version__, audio, omtlib, proc_audio, updater
 from ..api import ApiServer
 from ..api import dispatch as api_dispatch
 from ..config import OMT_PIXEL_FORMATS, default_config, default_stream, load_config, save_config
@@ -39,6 +40,7 @@ from . import theme
 from .dialogs import LogDialog, OMTDiscoveryDialog, PreferencesDialog, RoutesDialog, ScreenIdentifier
 from .preview import PreviewDialog, grab_display
 from .stream_card import StreamCard
+from .update_dialog import UpdateDialog
 from .widgets import (
     STATUS_TEXT,
     CollapsibleSection,
@@ -54,6 +56,8 @@ from .widgets import (
 log = logging.getLogger(__name__)
 
 SIDEBAR_WIDTH = 350
+UPDATE_FIRST_CHECK_MS = 5_000
+UPDATE_CHECK_EVERY_MS = 6 * 3600 * 1000
 PIXEL_FORMAT_LABELS = {
     "uyvy422": ("UYVY 4:2:2", "Recommandé : bon compromis qualité / bande passante"),
     "bgra": ("BGRA 4:4:4", "Pleine résolution couleur avec alpha, plus gourmand"),
@@ -64,6 +68,7 @@ PIXEL_FORMAT_LABELS = {
 class MainWindow(QMainWindow):
     audio_devices_ready = Signal(list)
     api_call = Signal(object)
+    update_found = Signal(object)  # Release, from the background check
 
     def __init__(self, engine: Engine | None = None) -> None:
         super().__init__()
@@ -115,6 +120,13 @@ class MainWindow(QMainWindow):
 
         QShortcut(QKeySequence.New, self, activated=self.add_stream)
         QTimer.singleShot(300, self.autostart)
+
+        self._latest_release: updater.Release | None = None
+        self.update_found.connect(self.on_update_checked)
+        self._update_timer = QTimer(self)
+        self._update_timer.timeout.connect(self.check_updates_quietly)
+        self._update_timer.start(UPDATE_CHECK_EVERY_MS)
+        QTimer.singleShot(UPDATE_FIRST_CHECK_MS, self.check_updates_quietly)
 
     # ------------------------------------------------------------------ UI
 
@@ -173,6 +185,11 @@ class MainWindow(QMainWindow):
         row.addWidget(self.streams_chip)
         row.addWidget(self.sender_chip)
         row.addSpacing(6)
+
+        self.update_btn = button("", variant="primary", icon="download", icon_color="#ffffff")
+        self.update_btn.clicked.connect(lambda: self.open_update(self._latest_release))
+        self.update_btn.hide()
+        row.addWidget(self.update_btn)
 
         prefs = button("Préférences", variant="ghost", icon="settings", icon_color=theme.TEXT_DIM)
         prefs.clicked.connect(self.open_preferences)
@@ -1142,6 +1159,45 @@ class MainWindow(QMainWindow):
         if started:
             self.notify("Démarrage automatique : " + " et ".join(started) + ". Les sources absentes seront reprises dès leur arrivée.", 10000)
         self.on_tick()
+
+    # ------------------------------------------------------------ updates
+
+    def check_updates_quietly(self) -> None:
+        """Background check: only the header button shows up, and only for a new version."""
+        if not self.config["updates"]["autoCheck"]:
+            return
+
+        def work() -> None:
+            updater.cleanup()  # leftovers of the previous update
+            try:
+                self.update_found.emit(updater.fetch_latest())
+            except updater.UpdateError as exc:
+                log.info("Recherche de mise à jour : %s", exc)
+            except Exception:
+                log.exception("Recherche de mise à jour")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_checked(self, release: updater.Release) -> None:
+        self._latest_release = release
+        available = updater.is_newer(release.version) and release.version != self.config["updates"]["skipped"]
+        if available:
+            self.update_btn.setText(f"Mise à jour {release.version}")
+            self.update_btn.setToolTip(f"py-multiview {release.version} est disponible (installée : {__version__})")
+        self.update_btn.setVisible(available)
+
+    def skip_update(self, version: str) -> None:
+        self.config["updates"]["skipped"] = version
+        self.update_btn.hide()
+        self.commit()
+
+    def open_update(self, release: updater.Release | None = None) -> None:
+        UpdateDialog(self, release).exec()
+
+    def quit_for_update(self) -> None:
+        """Leave right away: the installer (or the portable swap) waits for this process to end."""
+        self.close()
+        QApplication.instance().quit()
 
     def bring_to_front(self) -> None:
         self.showNormal()

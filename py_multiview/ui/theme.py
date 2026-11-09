@@ -58,6 +58,7 @@ _ICONS = {
     "chevron": '<path d="M6 9l6 6 6-6"/>',
     "chevron-right": '<path d="M9 6l6 6-6 6"/>',
     "check": '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    "download": '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
 }
 
 
@@ -196,6 +197,15 @@ QComboBox QAbstractItemView {{
     background: {SURFACE_2}; border: 1px solid {BORDER_HOVER}; border-radius: 6px;
     selection-background-color: #2d2a5c; padding: 4px;
 }}
+
+QTextBrowser {{
+    background: {FIELD}; border: 1px solid {BORDER}; border-radius: 7px; padding: 6px 8px;
+}}
+QProgressBar {{
+    background: {FIELD}; border: 1px solid {BORDER}; border-radius: 6px;
+    min-height: 12px; max-height: 12px; text-align: center; color: transparent;
+}}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
 
 QCheckBox {{ spacing: 8px; }}
 QCheckBox::indicator {{

@@ -57,9 +57,17 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""p
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""py-multiview - ffplay OMT"" dir=in action=allow program=""{app}\_internal\bin\omt\ffplay.exe"" enable=yes"; Flags: runhidden; Tasks: firewall
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""py-multiview - ffmpeg OMT"" dir=in action=allow program=""{app}\_internal\bin\omt\ffmpeg.exe"" enable=yes"; Flags: runhidden; Tasks: firewall
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; In-app update (py_multiview/updater.py): silent install with /RELAUNCH restarts the app.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""py-multiview - ffplay"""; Flags: runhidden; RunOnceId: "fw1"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""py-multiview - ffmpeg"""; Flags: runhidden; RunOnceId: "fw2"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""py-multiview - ffplay OMT"""; Flags: runhidden; RunOnceId: "fw3"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""py-multiview - ffmpeg OMT"""; Flags: runhidden; RunOnceId: "fw4"
+
+[Code]
+function RelaunchRequested: Boolean;
+begin
+  Result := WizardSilent and (Pos('/RELAUNCH', UpperCase(GetCmdTail)) > 0);
+end;

@@ -525,6 +525,17 @@ class PreferencesDialog(QDialog):
         startup.body.addWidget(self.auto_tx)
         layout.addWidget(startup)
 
+        updates = Section("Mises à jour")
+        check_now = button("Rechercher maintenant", variant="ghost", icon="download", icon_color=theme.TEXT_DIM)
+        check_now.clicked.connect(lambda: main.open_update())
+        updates.add_action(check_now)
+        self.auto_update = QCheckBox("Rechercher les nouvelles versions au lancement")
+        self.auto_update.setChecked(config["updates"]["autoCheck"])
+        self.auto_update.setToolTip("Interroge les releases GitHub du projet, puis toutes les 6 heures.\n"
+                                    "Rien n'est installé sans votre accord.")
+        updates.body.addWidget(self.auto_update)
+        layout.addWidget(updates)
+
         diag = Section("Moteur FFmpeg")
         refresh = button("Re-détecter", variant="ghost", icon="refresh", icon_color=theme.TEXT_DIM)
         refresh.clicked.connect(self._redetect)
@@ -602,6 +613,7 @@ class PreferencesDialog(QDialog):
         config["api"]["localOnly"] = self.api_local.isChecked()
         config["autoStartReceiver"] = self.auto_rx.isChecked()
         config["autoStartSender"] = self.auto_tx.isChecked()
+        config["updates"]["autoCheck"] = self.auto_update.isChecked()
         self.main.on_preferences_changed()
         self.accept()
 
