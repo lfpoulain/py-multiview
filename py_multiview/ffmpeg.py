@@ -342,9 +342,16 @@ def build_route_command(ffmpeg: Path, route: dict, localaddr: str = "") -> list[
     ]
 
 
-def loopback_input_args(rate: int, channels: int) -> list[str]:
-    """Raw PCM written on stdin by audio.LoopbackFeeder."""
-    return ["-f", "s16le", "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0"]
+def pipe_audio_input_args(rate: int, channels: int) -> list[str]:
+    """Raw float PCM written on stdin by audio.PipeFeeder.
+
+    Raw PCM has nothing to probe, yet FFmpeg would read five seconds of it
+    before sending the first picture: the probe is cut to nothing.
+    """
+    return [
+        "-probesize", "32", "-analyzeduration", "0",
+        "-f", "f32le", "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
+    ]
 
 
 def dshow_audio_input_args(device: str) -> list[str]:

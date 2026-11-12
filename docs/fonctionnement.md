@@ -89,7 +89,12 @@ L'audio est publié par un thread séparé, sur sa propre horloge :
 
 **Les horodatages audio viennent du nombre d'échantillons déjà publiés**, pas de l'horloge murale : c'est ce qui garantit un flux continu pour le récepteur, même si la capture gigue. Un *loopback* ne livre rien quand le PC est muet ; le silence n'est fabriqué que lorsque le périphérique se tait vraiment, et un coussin de 60 ms évite que ce silence repousse les échantillons qui reprennent juste après.
 
-Quand `libomt` n'est pas chargeable, l'émission repasse par `ffmpeg gdigrab → libomt`. Le son y est converti en `pcm_s16le` et sa dérive compensée en douceur (`aresample=async=1`, coupe franche seulement au-delà de 100 ms) : une valeur plus agressive réagirait à chaque micro-gigue des horodatages de capture et ferait « chanter » le son. Le muxage n'attend jamais l'image (`-max_interleave_delta 0`), sinon un à-coup de `gdigrab` libérerait l'audio par paquets.
+L'émission par FFmpeg (`ffmpeg gdigrab → libomt`, le chemin par défaut) reçoit ce même son capturé en float sur son entrée standard (`audio.PipeFeeder`), sauf pour les périphériques DirectShow qu'elle ouvre elle-même. Le son y est converti en `pcm_s16le` et sa dérive compensée en douceur (`aresample=async=1`).
+
+**L'image ne doit jamais attendre le son.** FFmpeg ouvre toutes ses entrées avant d'émettre quoi que ce soit : tant que son entrée audio est vide, l'image ne part pas non plus. Deux règles en découlent :
+
+- le tuyau est alimenté dès le premier instant, avec du silence tant que la capture ne tourne pas, et l'analyse du flux brut est réduite à rien (`-probesize 32 -analyzeduration 0`) — sans quoi FFmpeg lit cinq secondes de son avant la première image ;
+- la capture est tenue par `audio.LiveCapture`, à côté : elle ouvre la source, la surveille, la rouvre si elle disparaît (périphérique débranché, programme relancé) et rapporte le problème au lieu de lever une erreur. Le même objet sert à l'émission libomt.
 
 ## Retour audio OMT
 
@@ -127,7 +132,7 @@ py_multiview/
 ├── native.py       émission et retour audio en direct sur libomt
 ├── capture.py      capture d'écran GDI en BGRA
 ├── proc_audio.py   capture du son d'un programme (WASAPI process loopback)
-├── audio.py        points de capture audio (loopback WASAPI, entrées)
+├── audio.py        sources audio de l'émission : capture, reprise automatique, alimentation de FFmpeg
 ├── config.py       configuration : valeurs par défaut, normalisation, sauvegarde
 ├── displays.py     écrans Windows avec identifiants stables
 ├── omt.py          découverte des sources OMT

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -438,11 +440,24 @@ class PreferencesDialog(QDialog):
         super().__init__(main)
         self.main = main
         self.setWindowTitle("Préférences")
-        self.resize(640, 560)
+        self.resize(660, 720)
         config = main.config
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
+        # The sections scroll, the buttons stay in view: the list of settings
+        # outgrew small screens.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 20, 8, 20)
+        outer.setSpacing(14)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName("Transparent")
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 12, 0)
         layout.setSpacing(18)
 
         general = Section("Réception")
@@ -525,6 +540,16 @@ class PreferencesDialog(QDialog):
         startup.body.addWidget(self.auto_tx)
         layout.addWidget(startup)
 
+        window = Section("Fenêtre")
+        self.close_minimizes = QCheckBox("La croix réduit la fenêtre au lieu de quitter")
+        self.close_minimizes.setChecked(config["closeToMinimize"])
+        self.close_minimizes.setToolTip(
+            "Les flux et l'émission continuent. Pour quitter vraiment : Ctrl+Q,\n"
+            "ou clic droit sur l'icône py-multiview près de l'horloge."
+        )
+        window.body.addWidget(self.close_minimizes)
+        layout.addWidget(window)
+
         updates = Section("Mises à jour")
         check_now = button("Rechercher maintenant", variant="ghost", icon="download", icon_color=theme.TEXT_DIM)
         check_now.clicked.connect(lambda: main.open_update())
@@ -572,7 +597,8 @@ class PreferencesDialog(QDialog):
         save = button("Enregistrer", variant="primary")
         save.clicked.connect(self._save)
         footer.addWidget(save)
-        layout.addLayout(footer)
+        footer.setContentsMargins(0, 0, 12, 0)
+        outer.addLayout(footer)
 
     def _fill_diag(self) -> None:
         tools = self.main.engine.tools
@@ -613,6 +639,7 @@ class PreferencesDialog(QDialog):
         config["api"]["localOnly"] = self.api_local.isChecked()
         config["autoStartReceiver"] = self.auto_rx.isChecked()
         config["autoStartSender"] = self.auto_tx.isChecked()
+        config["closeToMinimize"] = self.close_minimizes.isChecked()
         config["updates"]["autoCheck"] = self.auto_update.isChecked()
         self.main.on_preferences_changed()
         self.accept()

@@ -175,6 +175,11 @@ QPushButton[variant="icon"] {{
     min-height: 30px; max-height: 30px; border-radius: 8px;
 }}
 QPushButton[variant="icon"]:hover {{ background: #262b3a; }}
+QPushButton[variant="tab"] {{ background: transparent; border-color: {BORDER}; color: {TEXT_DIM}; border-radius: 14px; padding: 5px 14px; }}
+QPushButton[variant="tab"]:hover {{ border-color: {BORDER_HOVER}; color: {TEXT}; }}
+QPushButton[variant="tab"]:checked {{ background: #2a2752; border-color: {ACCENT}; color: {TEXT}; font-weight: 600; }}
+QPushButton[variant="field"] {{ background: {FIELD}; text-align: left; padding: 4px 8px; font-weight: 400; }}
+QPushButton[variant="field"]:hover {{ border-color: {BORDER_HOVER}; background: {FIELD}; }}
 QPushButton[size="large"] {{ padding: 9px 20px; font-size: 13px; }}
 QPushButton[size="small"] {{ padding: 3px 10px; min-height: 18px; font-size: 12px; }}
 QFrame#SectionHead {{ background: transparent; border: none; }}

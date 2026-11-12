@@ -219,6 +219,16 @@ class ScreenSender(NativeWorker):
     def __init__(self) -> None:
         super().__init__("Émission OMT")
         self.address = ""
+        self._pump: _AudioPump | None = None
+
+    @property
+    def audio_problem(self) -> str:
+        pump = self._pump
+        return pump.live.problem if pump is not None else ""
+
+    def audio_level(self) -> float:
+        pump = self._pump
+        return pump.live.level() if pump is not None else 0.0
 
     def describe(self) -> str:
         return f"publication de « {self.params[0]} »" if self.params else self.label
@@ -234,11 +244,13 @@ class ScreenSender(NativeWorker):
                 if screen.clamped:
                     self.append(f"⚠ {screen.clamped}")
                 pump = _AudioPump(sender, audio_source, self.append) if audio_source else None
+                self._pump = pump
                 try:
                     if pump is not None:
                         pump.start()
                     self._send_frames(sender, screen, fps, pump)
                 finally:
+                    self._pump = None
                     if pump is not None:
                         pump.close()
 
@@ -298,33 +310,28 @@ class ScreenSender(NativeWorker):
 
 
 class _AudioPump:
-    """Captures an audio endpoint and publishes it on the same OMT sender.
+    """Captures an audio source and publishes it on the same OMT sender.
 
     Audio timestamps come from the number of samples already published, not
     from the wall clock: that is what keeps the stream continuous for the
-    receiver. Silence is inserted only when the endpoint really delivers
+    receiver. Silence is inserted only when the source really delivers
     nothing — a WASAPI loopback goes quiet when the PC plays nothing.
+
+    The source is held by :class:`audio.LiveCapture`: when it cannot be
+    captured (device missing, program not started), the picture goes out
+    without sound and the capture is retried until it comes.
     """
 
     def __init__(self, sender: omtlib.Sender, source: str, report) -> None:
         self._sender = sender
-        self._report = report
-        device, error = audio.resolve_input(source)
-        if device is None:
-            raise RuntimeError(error or "Entrée audio indisponible.")
-        self.device = device
-        self._recorder = audio.FloatRecorder(device)
         self._chunks: deque[bytes] = deque()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._sent = 0  # samples per channel already published
-        self._silence_from = 0.0
+        self.live = audio.LiveCapture(source, self._on_frames, report)
 
     def start(self) -> None:
-        self._recorder.start(self._on_frames)
-        self._report(f"Son : {self.device.name} ({self.device.rate} Hz, {self.device.channels} canaux)")
-        self._silence_from = time.perf_counter()
         self._thread = threading.Thread(target=self._run, daemon=True, name="omt-audio")
         self._thread.start()
 
@@ -345,20 +352,38 @@ class _AudioPump:
         return data
 
     def _run(self) -> None:
-        rate, channels = self.device.rate, self.device.channels
-        frame_bytes = 4 * channels
-        start = time.perf_counter()
+        generation = 0
+        start = silence_from = time.perf_counter()
+        rate = channels = 0
         while not self._stop.is_set():
+            self.live.poll()
+            if self.live.format is None:
+                self._stop.wait(AUDIO_PUMP)
+                continue
+            if self.live.generation != generation:
+                # A capture just (re)opened, maybe in another format: restart
+                # the silence clock from the samples already published.
+                generation = self.live.generation
+                rate, channels = self.live.format
+                self._drain_stale(rate, channels)
+                start = time.perf_counter() - self._sent / rate
+                silence_from = time.perf_counter()
             data = self._drain()
             if data:
                 self._publish(data, rate, channels)
-                self._silence_from = time.perf_counter()
-            elif time.perf_counter() - self._silence_from > SILENCE_AFTER:
+                silence_from = time.perf_counter()
+            elif time.perf_counter() - silence_from > SILENCE_AFTER:
                 due = int((time.perf_counter() - start) * rate)
                 gap = due - self._sent - int(rate * SILENCE_CUSHION)
                 if gap > 0:
-                    self._publish(b"\x00" * (gap * frame_bytes), rate, channels)
+                    self._publish(b"\x00" * (gap * 4 * channels), rate, channels)
             self._stop.wait(AUDIO_PUMP)
+
+    def _drain_stale(self, rate: int, channels: int) -> None:
+        """Samples counted at another rate mean nothing any more."""
+        if getattr(self, "_rate", rate) != rate:
+            self._sent = 0
+        self._rate = rate
 
     def _publish(self, interleaved: bytes, rate: int, channels: int) -> None:
         samples = len(interleaved) // (4 * channels)
@@ -374,4 +399,4 @@ class _AudioPump:
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
-        self._recorder.close()
+        self.live.close()

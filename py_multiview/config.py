@@ -126,10 +126,11 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
     # FFmpeg/gdigrab by default: the libomt sender gives a black picture on
     # some machines. True switches the emission back to libomt.
     sender["native"] = bool(sender.get("native", False))
-    # "" | "loopback" (what the PC plays) | "in:<device>" | "dshow:<device>" (legacy)
+    # "" | "loopback" (what the PC plays) | "out:<device>" (what one output plays)
+    # | "in:<device>" | "dshow:<device>" (DirectShow-only devices)
     # | "app:<exe>" (one program) | "notapp:<exe>" (the PC except that program)
     audio = _str(sender.get("audioSource"))
-    valid = audio in ("", "loopback") or audio.startswith(("in:", "dshow:", "app:", "notapp:"))
+    valid = audio in ("", "loopback") or audio.startswith(("in:", "out:", "dshow:", "app:", "notapp:"))
     sender["audioSource"] = audio if valid else ""
     try:
         sender["referenceLevel"] = max(0.0, min(20.0, float(sender.get("referenceLevel", 1.0))))
@@ -247,6 +248,9 @@ def normalize_config(config) -> dict:
     config["excludePrimaryDisplay"] = bool(config.get("excludePrimaryDisplay", True))
     config["autoStartReceiver"] = bool(config.get("autoStartReceiver", False))
     config["autoStartSender"] = bool(config.get("autoStartSender", False))
+    # The window's close button minimises instead of quitting: closing by
+    # reflex must not cut a live emission.
+    config["closeToMinimize"] = bool(config.get("closeToMinimize", True))
     return config
 
 

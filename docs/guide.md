@@ -22,7 +22,9 @@ Télécharger l'une des deux versions depuis la [dernière release](https://gith
 - **Installeur** (`py-multiview-setup.exe`) : installe l'application pour tous les utilisateurs ou seulement pour soi, ajoute un raccourci au menu Démarrer et propose de créer les règles du pare-feu Windows (recommandé).
 - **Portable** (`py-multiview-portable.zip`) : dézipper n'importe où, par exemple sur une clé USB, puis lancer `py-multiview.exe`.
 
-Tout est inclus, FFmpeg compris. Une seule instance peut tourner à la fois : relancer l'application ramène simplement la fenêtre existante au premier plan.
+Tout est inclus, FFmpeg compris. Une seule instance peut tourner à la fois : relancer l'application ramène simplement la fenêtre existante au premier plan, même si la première est encore en train de démarrer.
+
+**La croix réduit la fenêtre** au lieu de quitter, pour qu'un clic par réflexe ne coupe pas une émission. Pour quitter vraiment : **Ctrl+Q**, ou clic droit sur l'icône py-multiview près de l'horloge puis **Quitter** (une confirmation est demandée si quelque chose tourne). Ce comportement se désactive dans **Préférences → Fenêtre**.
 
 ### Mises à jour
 
@@ -123,10 +125,14 @@ Dans le panneau **Émission OMT** :
 | **Nom** | Nom publié sur le réseau ; les récepteurs le voient sous la forme `MACHINE (Nom)`. |
 | **Cadence** | 1 à 60 images par seconde. |
 | **Format** | UYVY 4:2:2 (recommandé), BGRA 4:4:4 (couleurs complètes, plus de débit) ou YUV 10 bits. |
-| **Audio** | **Sans son**, **Son du PC** (tout ce que joue la sortie audio par défaut), **Son de &lt;programme&gt;**, **Son du PC sauf &lt;programme&gt;**, ou une **entrée** de la liste : micro, carte son, câble virtuel (VB-Audio…), bus vMix Audio. ↻ actualise la liste. |
+| **Audio** | Le bouton ouvre le choix du son, rangé en trois familles avec une recherche : **Son du PC** (tout ce que joue le PC, ou une sortie précise), **Un programme** (ce programme seul, ou tout le PC sauf lui), **Une entrée** (micro, carte son, câble virtuel, bus vMix Audio). **Émettre sans son** coupe l'audio. |
 | **Horloge de sortie** | Cadence la sortie sur l'horloge OMT plutôt que sur la capture. |
 
 L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
+
+Pendant l'émission, une **barre de niveau** sous le choix du son montre ce qui part réellement : si elle bouge, la régie reçoit du son.
+
+**L'image ne dépend jamais du son.** Si la source audio ne peut pas être capturée (périphérique débranché, programme fermé, refus de Windows), l'émission part quand même, le bloc affiche *⚠ Émission sans son* avec la raison, et la capture est retentée toutes les deux secondes : le son revient seul dès que la source est là.
 
 ### N'émettre que le son d'un programme
 
@@ -138,7 +144,8 @@ La liste propose les programmes qui ont une fenêtre ouverte. Quelques points à
 
 - on capture un **programme entier**, pas un onglet : tout le son du navigateur part ensemble ;
 - un programme découpé en plusieurs processus (un navigateur) est capturé en entier, Windows suivant l'arborescence ;
-- si le programme n'est pas lancé au démarrage de l'émission, celle-ci le dit dans son journal et réessaie ;
+- si le programme n'est pas lancé, l'image part sans son et le son arrive dès qu'il démarre ; s'il est relancé en cours d'émission, il est repris automatiquement ;
+- avec *Tout le PC sauf lui*, si le programme ne tourne pas, c'est tout le son du PC qui est envoyé ;
 - il faut **Windows 10 build 20348 ou plus récent**. Sur une version antérieure, l'émission le signale et il faut passer par un câble virtuel.
 
 **Format** et **Horloge de sortie** sont grisés quand l'émission passe en direct par libomt, ce qui est le cas normal : la bibliothèque encode l'image elle-même. Ils ne servent qu'au repli FFmpeg, signalé par `OMT` au lieu de `OMT natif` dans la barre d'état.
@@ -187,6 +194,7 @@ L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-liv
 | **Émettre en direct par libomt** | **Décoché par défaut** : l'écran est capturé et publié par FFmpeg (gdigrab), le chemin éprouvé. Coché, libomt émet sans processus intermédiaire — plus léger, mais l'image est noire sur certaines machines. |
 | **Pilotage à distance** | Ouvre l'API HTTP locale, son port, et la restriction à ce poste. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
 | **Mises à jour** | Recherche automatique des nouvelles versions, et vérification à la demande. Voir [Mises à jour](#mises-à-jour). |
+| **Fenêtre** | La croix réduit la fenêtre au lieu de quitter (activé par défaut). |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
 | **Moteur FFmpeg** | Diagnostic des builds FFmpeg détectés et de leurs capacités. |
 | **Fichiers** | Accès aux dossiers de configuration et de journaux ; **Réinitialiser** efface toute la configuration. |
@@ -213,7 +221,8 @@ L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-liv
 | *L'écran principal est exclu* | Le flux vise l'écran principal alors que les Préférences l'excluent. |
 | Image saccadée avec beaucoup de flux | Essayer le décodage GPU (flux H.264) et le mode **Adapter**, qui ne coûte rien au processeur. |
 | Source OMT introuvable | Même réseau / VLAN, mDNS autorisé, TCP 6400-6600 ouverts des deux côtés. |
-| Pas de son dans l'émission | Vérifier la source **Audio** ; avec *Son du PC*, le son doit sortir sur la sortie audio par défaut de Windows. |
+| Pas de son dans l'émission | Regarder la **barre de niveau** sous le choix du son et le message du bloc Émission : il dit pourquoi la source n'est pas capturée. Avec *Tout ce que joue le PC*, le son doit sortir sur la sortie audio par défaut de Windows ; sinon choisir la sortie précise dans **Son du PC**. |
+| Émission *en attente* | L'image n'est pas encore partie : ouvrir le **journal de l'émission**. Avec une entrée DirectShow (vMix Audio…), FFmpeg attend que le périphérique livre du son. |
 | Retour audio muet | La source OMT porte-t-elle bien de l'audio ? Vérifier le **Volume** et la sortie audio par défaut de Windows. Le journal du panneau liste les flux reçus. |
 | Image reçue noire depuis l'émission | Ouvrir le **journal de l'émission** : il indique la zone capturée, le nombre de récepteurs connectés, et signale `L'écran capturé est entièrement noir`. Si ce message apparaît, le problème est à la capture — l'écran est réellement noir, ou son contenu est rendu par le GPU (lecteur vidéo plein écran, jeu) et GDI ne peut pas le relire. Sinon, décocher **Émettre en direct par libomt** dans les Préférences pour comparer avec FFmpeg. |
 | *Aucun ffplay avec support SRT* | Uniquement en lançant depuis les sources sans `bin/standard` : voir [Développement](developpement.md). |

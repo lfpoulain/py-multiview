@@ -6,7 +6,7 @@ import logging
 import threading
 
 from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -20,23 +20,26 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QScrollArea,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import APP_NAME, __version__, audio, omtlib, proc_audio, updater
+from .. import APP_NAME, __version__, audio, omtlib, updater
 from ..api import ApiServer
 from ..api import dispatch as api_dispatch
 from ..config import OMT_PIXEL_FORMATS, default_config, default_stream, load_config, save_config
 from ..control import Control
 from ..displays import describe, list_displays
 from ..engine import Engine
-from ..paths import APP_ICON_PNG_PATH
+from ..paths import APP_ICON_ICO_PATH, APP_ICON_PNG_PATH
 from ..process import Status
 from . import theme
+from .audio_picker import AudioSourceDialog
 from .dialogs import LogDialog, OMTDiscoveryDialog, PreferencesDialog, RoutesDialog, ScreenIdentifier
 from .preview import PreviewDialog, grab_display
 from .stream_card import StreamCard
@@ -44,6 +47,8 @@ from .update_dialog import UpdateDialog
 from .widgets import (
     STATUS_TEXT,
     CollapsibleSection,
+    ElidedLabel,
+    LevelMeter,
     button,
     divider,
     field_label,
@@ -66,7 +71,6 @@ PIXEL_FORMAT_LABELS = {
 
 
 class MainWindow(QMainWindow):
-    audio_devices_ready = Signal(list)
     api_call = Signal(object)
     update_found = Signal(object)  # Release, from the background check
 
@@ -80,7 +84,6 @@ class MainWindow(QMainWindow):
         self.cards: dict[str, StreamCard] = {}
         self._log_windows: dict[str, LogDialog] = {}
         self.host_ip = self.engine.host_ip
-        self._audio_sources: list[list[str]] = [[], []]  # [périphériques, programmes]
         self._previews: dict[str, PreviewDialog] = {}
 
         self._save_timer = QTimer(self)
@@ -108,8 +111,10 @@ class MainWindow(QMainWindow):
         self._preview_timer.timeout.connect(self.refresh_previews)
         self._preview_timer.start(2000)
 
-        self.audio_devices_ready.connect(self._fill_audio_sources)
-        self.refresh_audio_devices()
+        # The level meter needs a livelier pace than the status tick.
+        self._meter_timer = QTimer(self)
+        self._meter_timer.timeout.connect(self._refresh_meter)
+        self._meter_timer.start(80)
 
         # The API answers on its own threads but never touches the engine from
         # them: each request is executed here, on the UI thread.
@@ -119,6 +124,12 @@ class MainWindow(QMainWindow):
         self.refresh_api()
 
         QShortcut(QKeySequence.New, self, activated=self.add_stream)
+        QShortcut(QKeySequence("Ctrl+Q"), self, activated=self.quit_app)
+        self._quitting = False
+        self._close_hint_shown = False
+        self._build_tray()
+        # Windows closing the session must really quit, not minimise.
+        QApplication.instance().commitDataRequest.connect(lambda *_: setattr(self, "_quitting", True))
         QTimer.singleShot(300, self.autostart)
 
         self._latest_release: updater.Release | None = None
@@ -281,11 +292,23 @@ class MainWindow(QMainWindow):
             text, tip = PIXEL_FORMAT_LABELS[key]
             self.sender_format.addItem(text, key)
             self.sender_format.setItemData(self.sender_format.count() - 1, tip, Qt.ToolTipRole)
-        self.sender_audio = QComboBox()
-        self.sender_audio.setToolTip(
-            "Son du PC : ce que l'ordinateur joue (sortie audio par défaut)\n"
-            "Ou une entrée : micro, carte son, câble virtuel, vMix Audio…"
-        )
+        # The sound is picked in its own window (categories, search): a combo
+        # listing every device and every program twice was unreadable.
+        self.sender_audio = button(variant="field", tooltip="Choisir le son envoyé avec l'image")
+        audio_inner = QHBoxLayout(self.sender_audio)
+        audio_inner.setContentsMargins(8, 0, 6, 0)
+        audio_inner.setSpacing(6)
+        self.sender_audio_text = ElidedLabel("", "Transparent")
+        self.sender_audio_text.setAttribute(Qt.WA_TransparentForMouseEvents)
+        audio_inner.addWidget(self.sender_audio_text, 1)
+        chevron = QLabel()
+        chevron.setPixmap(theme.pixmap("chevron", theme.TEXT_DIM, 12))
+        chevron.setAttribute(Qt.WA_TransparentForMouseEvents)
+        audio_inner.addWidget(chevron)
+        self.sender_audio.setMinimumHeight(32)
+        self.sender_audio.clicked.connect(self.choose_sender_audio)
+        self.sender_meter = LevelMeter()
+        self.sender_meter.hide()
         self.sender_clock = QCheckBox("Horloge de sortie (clock_output)")
         self.sender_clock.setToolTip("Cadence la sortie OMT sur l'horloge libomt plutôt que sur la capture")
         for row_label, widget in (("Écran", self.sender_display), ("Nom", self.sender_name)):
@@ -301,9 +324,10 @@ class MainWindow(QMainWindow):
         line = QHBoxLayout()
         line.addWidget(field_label("Audio", 52))
         line.addWidget(self.sender_audio, 1)
-        refresh_audio = button(variant="icon", icon="refresh", icon_color=theme.TEXT_DIM, tooltip="Actualiser la liste des entrées audio")
-        refresh_audio.clicked.connect(self.refresh_audio_devices)
-        line.addWidget(refresh_audio)
+        sender.body.addLayout(line)
+        line = QHBoxLayout()
+        line.setContentsMargins(58, 0, 0, 0)
+        line.addWidget(self.sender_meter, 1)
         sender.body.addLayout(line)
         sender.body.addWidget(self.sender_clock)
         self.sender_display.currentIndexChanged.connect(self.on_sender_changed)
@@ -311,7 +335,6 @@ class MainWindow(QMainWindow):
         self.sender_fps.valueChanged.connect(self.on_sender_changed)
         self.sender_format.currentIndexChanged.connect(self.on_sender_changed)
         self.sender_clock.toggled.connect(self.on_sender_changed)
-        self.sender_audio.currentIndexChanged.connect(self.on_sender_changed)
         self.sender_detail = label("", "Detail", wrap=True)
         self.sender_detail.hide()
         footer(sender, self.sender_detail, "sender", "Émission OMT")
@@ -405,7 +428,7 @@ class MainWindow(QMainWindow):
         col.addWidget(routes)
         col.addStretch(1)
 
-        for combo in (self.sender_display, self.sender_format, self.sender_audio):
+        for combo in (self.sender_display, self.sender_format):
             combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(6)
         scroll.setWidget(content)
@@ -699,52 +722,27 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------ sender
 
-    def refresh_audio_devices(self) -> None:
-        """List the audio inputs off the UI thread (enumeration can take ~1 s)."""
-        native = omtlib.available() and self.config["sender"].get("native", True)
+    def _show_sender_audio(self) -> None:
+        source = self.config["sender"].get("audioSource", "")
+        self.sender_audio_text.set_full_text(audio.describe_source(source))
+
+    def choose_sender_audio(self) -> None:
         toolchain = self.engine.tools.ffmpeg_for("omt")
-        ffmpeg = toolchain.ffmpeg if toolchain else None
+        native = omtlib.available() and self.config["sender"].get("native", False)
+        dialog = AudioSourceDialog(
+            self, self.config["sender"].get("audioSource", ""), toolchain.ffmpeg if toolchain else None, native
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.config["sender"]["audioSource"] = dialog.selected_source
+        self._show_sender_audio()
+        self.commit()  # applied live: the emission restarts with the new sound
 
-        def work():
-            devices = [d.name for d in audio.list_input_devices()] if native else audio.list_dshow_audio(ffmpeg)
-            programs = sorted({p.name for p in proc_audio.list_programs()}, key=str.lower)
-            return [devices, programs]
-
-        threading.Thread(target=lambda: self.audio_devices_ready.emit(work()), daemon=True).start()
-
-    def _fill_audio_sources(self, payload: list) -> None:
-        devices, programs = payload
-        self._audio_sources = [list(devices), list(programs)]
-        selected = self.config["sender"].get("audioSource", "")
-        native = omtlib.available() and self.config["sender"].get("native", True)
-        prefix = audio.INPUT_PREFIX if native else audio.DSHOW_PREFIX
-        combo = self.sender_audio
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItem("Sans son", "")
-        combo.addItem("Son du PC (sortie par défaut)", audio.LOOPBACK)
-        if programs:
-            combo.insertSeparator(combo.count())
-            for name in programs:
-                combo.addItem(f"Son de {name}", audio.PROGRAM_PREFIX + name)
-            combo.insertSeparator(combo.count())
-            for name in programs:
-                combo.addItem(f"Son du PC sauf {name}", audio.EXCEPT_PREFIX + name)
-        if devices:
-            combo.insertSeparator(combo.count())
-        for name in devices:
-            combo.addItem(name, prefix + name)
-        if selected and combo.findData(selected) < 0:
-            # A device saved under the other prefix names the same hardware.
-            bare = selected.split(":", 1)[-1] if ":" in selected else selected
-            twin = combo.findData(prefix + bare)
-            if twin >= 0:
-                combo.setCurrentIndex(twin)
-                combo.blockSignals(False)
-                return
-            combo.addItem(f"⚠ {bare} (absent)", selected)
-        combo.setCurrentIndex(max(0, combo.findData(selected)))
-        combo.blockSignals(False)
+    def _refresh_meter(self) -> None:
+        level = self.engine.sender_audio_level() if self.engine.sender_desired else None
+        self.sender_meter.setVisible(level is not None)
+        if level is not None:
+            self.sender_meter.set_level(level)
 
     # ------------------------------------------------------------ previews
 
@@ -804,7 +802,7 @@ class MainWindow(QMainWindow):
         for w in widgets:
             w.blockSignals(False)
         self._fill_sender_displays()
-        self._fill_audio_sources(self._audio_sources)
+        self._show_sender_audio()
 
     def on_sender_changed(self, *_args) -> None:
         sender = self.config["sender"]
@@ -813,8 +811,6 @@ class MainWindow(QMainWindow):
         sender["fps"] = self.sender_fps.value()
         sender["pixelFormat"] = self.sender_format.currentData()
         sender["clockOutput"] = self.sender_clock.isChecked()
-        if self.sender_audio.count():
-            sender["audioSource"] = self.sender_audio.currentData() or ""
         self.schedule_commit()
 
     def toggle_sender(self) -> None:
@@ -1065,7 +1061,7 @@ class MainWindow(QMainWindow):
         count = len(self.displays)
         self.sections["screens"].set_summary(f"{count} écran{'s' if count > 1 else ''} détecté{'s' if count > 1 else ''}")
 
-        audio_text = self.sender_audio.currentText() or "Sans son"
+        audio_text = audio.describe_source(cfg["sender"].get("audioSource", ""))
         screen_text = self.sender_display.currentText() if self.sender_display.currentData() else "aucun écran"
         text, state = self._summary(
             "sender", sender,
@@ -1196,15 +1192,87 @@ class MainWindow(QMainWindow):
 
     def quit_for_update(self) -> None:
         """Leave right away: the installer (or the portable swap) waits for this process to end."""
+        self._quit()
+
+    # ------------------------------------------------------------ window / quit
+
+    def _build_tray(self) -> None:
+        """Icon near the clock: the way back to a minimised window, and the way out."""
+        self.tray = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        icon_path = APP_ICON_ICO_PATH if APP_ICON_ICO_PATH.exists() else APP_ICON_PNG_PATH
+        icon = QIcon(str(icon_path)) if icon_path.exists() else self.windowIcon()
+        self.tray = QSystemTrayIcon(icon, self)
+        self.tray.setToolTip(APP_NAME)
+        menu = QMenu(self)
+        show = QAction("Ouvrir py-multiview", self)
+        show.triggered.connect(self.bring_to_front)
+        menu.addAction(show)
+        menu.addSeparator()
+        leave = QAction("Quitter", self)
+        leave.triggered.connect(self.quit_app)
+        menu.addAction(leave)
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(self._on_tray_activated)
+        self.tray.show()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self.bring_to_front()
+
+    def running_summary(self) -> str:
+        """What quitting would cut, in words; empty when nothing runs."""
+        running = []
+        if self.engine.reception_running:
+            running.append("la réception")
+        if self.engine.sender_desired:
+            running.append("l'émission OMT")
+        if self.engine.monitor_desired or self.engine.floating_desired:
+            running.append("le retour")
+        return ", ".join(running[:-1]) + (" et " if len(running) > 1 else "") + running[-1] if running else ""
+
+    def quit_app(self) -> None:
+        """Really quit (Ctrl+Q, tray menu), after a word of warning when something is live."""
+        running = self.running_summary()
+        if running:
+            self.bring_to_front()
+            answer = QMessageBox.question(
+                self, "Quitter py-multiview",
+                f"Quitter arrêtera {running}.\n\nQuitter quand même ?",
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
+            )
+            if answer != QMessageBox.Yes:
+                return
+        self._quit()
+
+    def _quit(self) -> None:
+        self._quitting = True
         self.close()
         QApplication.instance().quit()
 
     def bring_to_front(self) -> None:
-        self.showNormal()
+        if self.isMinimized():
+            # Back to what it was before (a maximised window stays maximised).
+            self.setWindowState((self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
+        self.show()
         self.raise_()
         self.activateWindow()
 
     def closeEvent(self, event) -> None:
+        if not self._quitting and self.config.get("closeToMinimize", True):
+            # The cross only puts the window away: everything keeps running.
+            event.ignore()
+            self.showMinimized()
+            if not self._close_hint_shown:
+                self._close_hint_shown = True
+                hint = "py-multiview continue de tourner. Pour quitter : Ctrl+Q, ou clic droit sur son icône près de l'horloge."
+                if self.tray is not None:
+                    self.tray.showMessage(APP_NAME, hint, QSystemTrayIcon.Information, 6000)
+                self.notify(hint, 10000)
+            return
+        if self.tray is not None:
+            self.tray.hide()
         self.commit()
         self.api.stop()
         self.engine.shutdown()

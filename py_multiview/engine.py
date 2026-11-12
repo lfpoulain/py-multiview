@@ -25,7 +25,7 @@ from .ffmpeg import (
     build_route_command,
     build_sender_command,
     dshow_audio_input_args,
-    loopback_input_args,
+    pipe_audio_input_args,
     srt_listener_url,
     udp_input_url,
 )
@@ -67,7 +67,10 @@ class Engine:
         self.sup = supervisor or Supervisor()
         self.worker_factory = worker_factory
         self.host_ip = local_ip()
-        self._loopback: audio.LoopbackDevice | bool | None = None
+        # Sound of the FFmpeg sender: format of each source (asking opens
+        # PortAudio, so once per emission) and the feeder currently in use.
+        self._audio_formats: dict[str, tuple[int, int]] = {}
+        self._sender_feeder: audio.PipeFeeder | None = None
         self.config: dict = {}
         self.displays: list[dict] = []
         self.desired_streams: set[str] = set()
@@ -124,7 +127,7 @@ class Engine:
         self.reconcile()
 
     def start_sender(self) -> str | None:
-        self._loopback = None  # the default playback device may have changed
+        self._audio_formats.clear()  # devices may have changed since last time
         self.sender_desired = True
         self.reconcile()
         return self.errors.get(SENDER)
@@ -178,7 +181,33 @@ class Engine:
         return self._info(ROUTE + route_id, route_id in self.active_routes)
 
     def sender_info(self) -> ProcessInfo:
-        return self._info(SENDER, self.sender_desired)
+        info = self._info(SENDER, self.sender_desired)
+        # The picture goes out even when the sound cannot be captured: say so.
+        if not info.detail and info.status in (Status.ACTIVE, Status.WAITING, Status.STARTING):
+            problem = self.sender_audio_problem()
+            if problem:
+                info.detail = f"⚠ Émission sans son — {problem}"
+        return info
+
+    def _sender_audio(self):
+        """What captures the sender's sound right now (feeder or libomt worker), if any."""
+        if not self.sender_desired:
+            return None
+        worker = self.workers.get(SENDER)
+        if worker is not None and worker.alive():
+            return worker
+        return self._sender_feeder if self.sup.keys(SENDER) else None
+
+    def sender_audio_problem(self) -> str:
+        source = self._sender_audio()
+        return getattr(source, "audio_problem", "") if source is not None else ""
+
+    def sender_audio_level(self) -> float | None:
+        """Peak level (0..1) of the sound being sent; None when it is not measured."""
+        source = self._sender_audio()
+        if source is None or not hasattr(source, "audio_level"):
+            return None
+        return source.audio_level()
 
     def monitor_info(self) -> ProcessInfo:
         return self._info(MONITOR, self.monitor_desired)
@@ -309,12 +338,8 @@ class Engine:
                 sender["name"], int(display["x"]), int(display["y"]),
                 int(display["width"]), int(display["height"]), int(sender["fps"]), source,
             )
-            # Enumerating audio endpoints opens PortAudio, so only check when
-            # something actually changed (reconcile runs twice per second).
-            if source and params != worker.params:
-                _device, error = audio.resolve_input(source)
-                if error:
-                    return self._fail(SENDER, error, errors)
+            # A source that cannot be captured does not stop the picture: the
+            # worker reports it and keeps trying.
             self.sup.stop(SENDER)
             worker.ensure(params)
             return None
@@ -436,19 +461,17 @@ class Engine:
             return None, NO_OMT_FFMPEG
         audio_input, feeder = None, None
         source = sender.get("audioSource", "")
-        if source == audio.LOOPBACK:
-            device = self.loopback_device()
-            if device is None:
-                return None, "Capture du son du PC indisponible (aucune sortie audio par défaut)."
-            audio_input = loopback_input_args(device.rate, device.channels)
-            feeder = audio.LoopbackFeeder(device)
-        elif source.startswith((audio.PROGRAM_PREFIX, audio.EXCEPT_PREFIX)):
-            # Windows hands a process loopback over in float; it reaches ffmpeg
-            # on its stdin like the PC's own sound.
-            audio_input = loopback_input_args(48000, 2)
-            feeder = audio.ProgramFeeder(source)
-        elif source.startswith(audio.DSHOW_PREFIX):
+        if source.startswith(audio.DSHOW_PREFIX):
             audio_input = dshow_audio_input_args(source[len(audio.DSHOW_PREFIX):])
+        elif source:
+            # Captured here and written on ffmpeg's stdin, which is never left
+            # empty: no audio trouble can hold the picture back.
+            rate, channels = self.audio_format(source)
+            audio_input = pipe_audio_input_args(rate, channels)
+            feeder = self._sender_feeder
+            if feeder is None or (feeder.source, feeder.rate, feeder.channels) != (source, rate, channels):
+                feeder = audio.PipeFeeder(source, rate, channels)
+        self._sender_feeder = feeder
         args = build_sender_command(toolchain.ffmpeg, display, sender, audio_input)
         spec = ProcessSpec(args, "Émission OMT", progress="ffmpeg", graceful_quit=feeder is None, stdin_feeder=feeder)
         return spec, None
@@ -481,8 +504,8 @@ class Engine:
         )
         return ProcessSpec(args, "Fenêtre de retour", progress="ffplay", env=dict(PLAYER_ENV)), None
 
-    def loopback_device(self) -> audio.LoopbackDevice | None:
-        """Default playback device for loopback capture (cached: probing opens PortAudio)."""
-        if self._loopback is None:
-            self._loopback = audio.loopback_device() or False
-        return self._loopback or None
+    def audio_format(self, source: str) -> tuple[int, int]:
+        """``(rate, channels)`` of a sender source (cached: asking opens PortAudio)."""
+        if source not in self._audio_formats:
+            self._audio_formats[source] = audio.source_format(source)
+        return self._audio_formats[source]

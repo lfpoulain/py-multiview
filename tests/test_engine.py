@@ -181,10 +181,50 @@ def test_sender_with_dshow_audio():
     assert "audio=Micro" in spec.args and spec.stdin_feeder is None and spec.graceful_quit
 
 
-def test_sender_loopback_unavailable_is_explained():
+def test_sender_starts_even_when_the_sound_cannot_be_captured(monkeypatch):
+    # No playback device: the format falls back to 48 kHz stereo and the
+    # picture goes out; the feeder reports the problem and keeps trying.
+    monkeypatch.setattr(audio, "resolve_input", lambda source: (None, "Capture du son du PC indisponible."))
     engine = make_engine({"sender": {"displayId": "main", "audioSource": "loopback"}})
-    engine.loopback_device = lambda: None
-    assert "son du PC" in engine.start_sender()
+    assert engine.start_sender() is None
+    spec = engine.sup.running["sender"]
+    assert spec.args[spec.args.index("pipe:0") - 5:spec.args.index("pipe:0")] == ["-ar", "48000", "-ac", "2", "-i"]
+    assert isinstance(spec.stdin_feeder, audio.PipeFeeder)
+
+
+def test_sender_pipe_follows_the_device_format(monkeypatch):
+    device = audio.InputDevice(3, "Enceintes 5.1", 44100, 6, loopback=True)
+    monkeypatch.setattr(audio, "resolve_input", lambda source: (device, None))
+    engine = make_engine({"sender": {"displayId": "main", "audioSource": "out:Enceintes 5.1"}})
+    assert engine.start_sender() is None
+    spec = engine.sup.running["sender"]
+    args = spec.args
+    assert args[args.index("pipe:0") - 7:args.index("pipe:0")] == ["-f", "f32le", "-ar", "44100", "-ac", "6", "-i"]
+    feeder = spec.stdin_feeder
+    assert (feeder.source, feeder.rate, feeder.channels) == ("out:Enceintes 5.1", 44100, 6)
+    # Reconcile runs twice per second: the same feeder is kept, so its state
+    # (level, problem) stays readable while the process runs.
+    engine.reconcile()
+    assert engine.sup.running["sender"].stdin_feeder is feeder
+    assert engine.sender_audio_level() == 0.0 and engine.sender_audio_problem() == ""
+
+
+def test_sender_reports_an_audio_problem_without_stopping(monkeypatch):
+    monkeypatch.setattr(audio, "resolve_input", lambda source: (None, "introuvable"))
+    engine = make_engine({"sender": {"displayId": "main", "audioSource": "in:Micro"}})
+    assert engine.start_sender() is None
+    feeder = engine.sup.running["sender"].stdin_feeder
+
+    class Live:
+        problem = "Entrée audio « Micro » introuvable."
+
+        def level(self):
+            return 0.0
+
+    feeder._feed = type("Feed", (), {"live": Live()})()
+    info = engine.sender_info()
+    assert info.status == Status.ACTIVE
+    assert "sans son" in info.detail and "Micro" in info.detail
 
 
 def test_audio_monitor_needs_a_source():
@@ -252,7 +292,7 @@ def test_program_audio_reaches_ffmpeg_through_a_pipe():
     # le son du PC, et non par un périphérique DirectShow.
     assert "-f" in spec.args and "pipe:0" in spec.args
     assert "dshow" not in spec.args
-    assert isinstance(spec.stdin_feeder, audio.ProgramFeeder)
+    assert isinstance(spec.stdin_feeder, audio.PipeFeeder)
     assert spec.stdin_feeder.source == "app:chrome.exe"
 
 
@@ -279,10 +319,12 @@ def test_floating_window_can_watch_another_source():
     assert "floating" not in engine.sup.running
 
 
-def test_native_sender_reports_a_missing_audio_input():
+def test_native_sender_runs_without_its_audio_input():
+    # A missing input must not keep the picture from going out: the worker
+    # reports it and retries on its own.
     engine = make_engine(
-        {"sender": {"displayId": "side", "audioSource": "dshow:Absent", "native": True}}, native=True
+        {"sender": {"displayId": "side", "audioSource": "in:Absent", "native": True}}, native=True
     )
-    error = engine.start_sender()
-    assert error and "Absent" in error
-    assert not engine.fake_workers["sender"].running
+    assert engine.start_sender() is None
+    worker = engine.fake_workers["sender"]
+    assert worker.running and worker.params[-1] == "in:Absent"

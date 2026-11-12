@@ -50,8 +50,9 @@ class ProcessSpec:
     progress: str = "none"  # "ffplay" (stderr -stats) | "ffmpeg" (stdout -progress) | "none"
     env: dict[str, str] = field(default_factory=dict)
     graceful_quit: bool = False  # send "q" on stdin before killing (ffmpeg)
-    # Called with the child's stdin right after launch; returns a function stopping the feed.
-    stdin_feeder: Callable[[IO[bytes]], Callable[[], None]] | None = None
+    # Called with the child's stdin and a function writing to its log, right
+    # after launch; returns a function stopping the feed.
+    stdin_feeder: Callable[[IO[bytes], Callable[[str], None]], Callable[[], None]] | None = None
 
     def signature(self) -> tuple:
         return (tuple(self.args), tuple(sorted(self.env.items())))
@@ -193,7 +194,17 @@ class ManagedProcess:
         if self.spec.progress == "ffmpeg":
             threading.Thread(target=self._read_progress, args=(self.proc,), daemon=True).start()
         if self.spec.stdin_feeder:
-            self._stop_feed = self.spec.stdin_feeder(self.proc.stdin)
+            try:
+                self._stop_feed = self.spec.stdin_feeder(self.proc.stdin, self._append)
+            except Exception as exc:
+                # A child left waiting on a stdin nobody feeds would hang for
+                # ever: close it, so it goes on with what it has.
+                log.exception("[%s] alimentation de l'entrée standard impossible", self.key)
+                self._append(f"⚠ Entrée audio indisponible : {exc}")
+                try:
+                    self.proc.stdin.close()
+                except OSError:
+                    pass
         return True
 
     def _end_feed(self) -> None:

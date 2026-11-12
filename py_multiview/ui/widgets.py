@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+import math
+
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -280,3 +283,47 @@ class CollapsibleSection(QWidget):
         self.content.setVisible(self._expanded)
         self._chevron.setPixmap(theme.pixmap("chevron" if self._expanded else "chevron-right",
                                              theme.TEXT_DIM, 14))
+
+
+class LevelMeter(QWidget):
+    """Thin peak meter on a dB scale: -60 dB at the left, 0 dB at the right."""
+
+    FLOOR_DB = -60.0
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._position = 0.0
+        self._shown = 0.0
+        self.setFixedHeight(6)
+        self.setToolTip("Niveau du son envoyé")
+
+    @classmethod
+    def position(cls, level: float) -> float:
+        """0..1 along the bar for a linear peak level (0..1)."""
+        if level <= 0.0:
+            return 0.0
+        db = 20.0 * math.log10(min(1.0, level))
+        return max(0.0, min(1.0, 1.0 - db / cls.FLOOR_DB))
+
+    def set_level(self, level: float) -> None:
+        position = self.position(level)
+        # Fall back smoothly, rise at once: readable without flicker.
+        self._shown = position if position >= self._shown else max(position, self._shown - 0.08)
+        if abs(self._shown - self._position) > 0.002:
+            self._position = self._shown
+            self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        rect = QRectF(self.rect())
+        radius = rect.height() / 2
+        painter.setBrush(QColor(theme.FIELD))
+        painter.drawRoundedRect(rect, radius, radius)
+        if self._position > 0.0:
+            color = theme.DANGER if self._position > 0.97 else theme.WARNING if self._position > 0.85 else theme.SUCCESS
+            painter.setBrush(QColor(color))
+            fill = QRectF(rect.x(), rect.y(), max(rect.height(), rect.width() * self._position), rect.height())
+            painter.drawRoundedRect(fill, radius, radius)
+        painter.end()
