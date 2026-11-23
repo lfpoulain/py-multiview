@@ -898,6 +898,7 @@ class MainWindow(QMainWindow):
     def refresh_api(self) -> None:
         """Apply the API settings: start, move, or stop the server."""
         settings = self.config.get("api", {})
+        self.api.token = settings.get("token", "")
         if not settings.get("enabled"):
             self.api.stop()
             return
@@ -912,14 +913,14 @@ class MainWindow(QMainWindow):
         host = "127.0.0.1" if self.api.host.startswith("127.") else self.host_ip
         return f"http://{host}:{self.api.port}"
 
-    def _run_api_request(self, method: str, path: str):
+    def _run_api_request(self, method: str, path: str, body: bytes = b""):
         """Called from an HTTP thread: run the route on the UI thread."""
         done = threading.Event()
         box: dict = {}
 
         def job() -> None:
             try:
-                box["result"] = api_dispatch(method, path, self.control)
+                box["result"] = api_dispatch(method, path, self.control, body)
             except Exception as exc:  # noqa: BLE001 - reported to the caller
                 box["error"] = exc
             finally:

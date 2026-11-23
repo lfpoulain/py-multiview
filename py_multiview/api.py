@@ -1,9 +1,18 @@
 """Local network API, shaped like the services py-livedeck already speaks to.
 
-The conventions come straight from py-intercom and Tally32, the other
-services a LiveDeck button drives:
+Two contracts live side by side:
 
-* plain HTTP on the LAN, JSON in and out, no authentication;
+* ``/api/deck/…`` — the Stream Deck contract shared with orchestream-v2,
+  where the server describes every key (see :mod:`py_multiview.deck`). This is
+  the one py-livedeck should use;
+* the original routes below, kept for existing buttons, Companion and scripts.
+
+An optional token protects both: when one is set, every request must carry
+``Authorization: Bearer <token>`` (never in the URL), else 401 ``INVALID_TOKEN``.
+
+The original routes come straight from py-intercom and Tally32:
+
+* plain HTTP on the LAN, JSON in and out;
 * one ``GET /status`` returning the **whole** state, with ``connected`` so the
   generic "network device" check lights up, and ``streams`` as the signature
   key telling the deck it really reached py-multiview;
@@ -23,15 +32,19 @@ which owns the engine.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
 log = logging.getLogger(__name__)
 
 MODES = ("on", "off", "toggle")
+DECK_HELP = ("GET /api/deck/state, GET /api/deck/events, GET /api/deck/commands, "
+             "POST /api/deck/commands/<id> {\"args\": {...}}")
 ROUTES_HELP = (
     "GET /status, GET /sources, "
     "POST /reception/<on|off|toggle>, POST /stream/<n>/<on|off|toggle>, "
@@ -50,9 +63,13 @@ class ApiError(Exception):
         self.status = status
         self.code = code
         self.message = message
+        self.details: dict | None = None
 
     def body(self) -> dict:
-        return {"error": {"code": self.code, "message": self.message}}
+        error = {"code": self.code, "message": self.message}
+        if self.details:
+            error["details"] = self.details
+        return {"error": error}
 
 
 def not_found(message: str) -> ApiError:
@@ -63,13 +80,57 @@ def bad_value(message: str) -> ApiError:
     return ApiError(422, "BAD_VALUE", message)
 
 
-def dispatch(method: str, path: str, control) -> tuple[int, dict]:
+def dispatch(method: str, path: str, control, body: bytes = b"") -> tuple[int, dict]:
     """Route one request. ``control`` implements the verbs below."""
     parts = [unquote(p) for p in path.split("?", 1)[0].strip("/").split("/") if p]
     try:
+        if parts[:2] == ["api", "deck"]:
+            return 200, _deck_route(method.upper(), parts[2:], control, body)
         return 200, _route(method.upper(), parts, control)
     except ApiError as exc:
         return exc.status, exc.body()
+
+
+def check_token(expected: str, authorization: str | None) -> ApiError | None:
+    """None when the request may go through: no token set, or the right one."""
+    if not expected:
+        return None
+    scheme, _, value = (authorization or "").partition(" ")
+    if scheme.lower() == "bearer" and hmac.compare_digest(value.strip().encode(), expected.encode()):
+        return None
+    return ApiError(401, "INVALID_TOKEN", "jeton API absent ou incorrect : py-multiview › Préférences › "
+                                          "Pilotage à distance, en-tête « Authorization: Bearer <jeton> »")
+
+
+def _json_body(body: bytes) -> dict:
+    """``{}`` for an empty body, the object otherwise."""
+    if not body or not body.strip():
+        return {}
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        error = ApiError(422, "VALIDATION_FAILED", "corps JSON illisible")
+        error.details = {"body": "JSON attendu, ou corps vide"}
+        raise error from None
+    if not isinstance(data, dict):
+        raise ApiError(422, "VALIDATION_FAILED", "le corps doit être un objet JSON")
+    return data
+
+
+def _deck_route(method: str, parts: list[str], control, body: bytes) -> dict:
+    """``/api/deck/…`` (the orchestream-v2 contract). Never a bare NOT_FOUND:
+    py-livedeck reads that code as "public address refused"."""
+    from . import deck
+
+    if parts in (["state"], ["commands"]):
+        if method != "GET":
+            raise ApiError(405, "METHOD_NOT_ALLOWED", f"utilisez GET /api/deck/{parts[0]}")
+        return control.deck_state() if parts == ["state"] else {"commands": control.deck_commands()}
+    if len(parts) == 2 and parts[0] == "commands":
+        _post_only(method, "une commande")
+        args = _json_body(body).get("args", {})
+        return deck.run_command(control, parts[1], args if args is not None else {})
+    raise ApiError(404, "ROUTE_NOT_FOUND", f"route inconnue. Routes : {DECK_HELP}")
 
 
 def _mode(value: str) -> str:
@@ -85,7 +146,7 @@ def _post_only(method: str, what: str) -> None:
 
 def _route(method: str, parts: list[str], control) -> dict:
     if not parts:
-        return {"app": "py-multiview", "routes": ROUTES_HELP}
+        return {"app": "py-multiview", "deck": DECK_HELP, "routes": ROUTES_HELP}
 
     head = parts[0]
     if head == "status":
@@ -144,21 +205,91 @@ class _Handler(BaseHTTPRequestHandler):
     sys_version = ""
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._refused():
+            return
+        if self.path.split("?", 1)[0].rstrip("/") == "/api/deck/events":
+            self._events()
+            return
         self._answer("GET")
 
     def do_POST(self) -> None:  # noqa: N802
-        # LiveDeck posts an empty body; read and discard anything sent anyway.
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > 0:
-            self.rfile.read(min(length, 65536))
-        self._answer("POST")
-
-    def _answer(self, method: str) -> None:
+        # LiveDeck posts an empty body on the original routes, JSON args on /api/deck.
         try:
-            status, body = self.server.call(method, self.path)
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        body = self.rfile.read(min(length, 65536)) if length > 0 else b""
+        if self._refused():
+            return
+        self._answer("POST", body)
+        self.server.changed()  # a command ran: live streams look again right away
+
+    def _refused(self) -> bool:
+        error = check_token(self.server.token(), self.headers.get("Authorization"))
+        if error is not None:
+            self._send_json(error.status, error.body())
+            return True
+        return False
+
+    def _answer(self, method: str, body: bytes = b"") -> None:
+        try:
+            status, answer = self.server.call(method, self.path, body)
         except Exception as exc:  # never leave the deck hanging
             log.exception("Erreur API")
-            status, body = 500, {"error": {"code": "INTERNAL", "message": str(exc)}}
+            status, answer = 500, {"error": {"code": "INTERNAL", "message": str(exc)}}
+        self._send_json(status, answer)
+
+    def _events(self) -> None:
+        """``GET /api/deck/events``: ``state``, then a ``patch`` on each change.
+
+        The state is read every second, and at once after a command; a comment
+        line every 25 s keeps the connection (and its proxies) alive.
+        """
+        from . import deck
+
+        server = self.server
+        if not server.open_stream():
+            self._send_json(429, {"error": {"code": "TOO_MANY_STREAMS",
+                                            "message": f"déjà {MAX_STREAMS} flux en direct ouverts"}})
+            return
+        try:
+            status, state = server.call("GET", "/api/deck/state", b"")
+            if status != 200:
+                self._send_json(status, state)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self._event("state", state)
+            last, last_write, seen = state, time.monotonic(), server.generation
+            while not server.closing.is_set():
+                seen = server.wait_change(seen, POLL_SECONDS)
+                if server.closing.is_set():
+                    break
+                status, state = server.call("GET", "/api/deck/state", b"")
+                if status == 200:
+                    patch = deck.build_patch(last, state)
+                    if patch is not None:
+                        self._event("patch", patch)
+                        last, last_write = state, time.monotonic()
+                        continue
+                if time.monotonic() - last_write >= KEEPALIVE_SECONDS:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    last_write = time.monotonic()
+        except OSError:
+            pass  # the deck went away
+        finally:
+            server.close_stream()
+
+    def _event(self, name: str, data: dict) -> None:
+        payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        self.wfile.write(f"event: {name}\ndata: {payload}\n\n".encode())
+        self.wfile.flush()
+
+    def _send_json(self, status: int, body: dict) -> None:
         raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -174,13 +305,51 @@ class _Handler(BaseHTTPRequestHandler):
         log.debug("API %s", fmt % args)
 
 
+MAX_STREAMS = 16
+POLL_SECONDS = 1.0
+KEEPALIVE_SECONDS = 25.0
+
+
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, call) -> None:
+    def __init__(self, address, call, token) -> None:
         super().__init__(address, _Handler)
         self.call = call
+        self.token = token
+        self.closing = threading.Event()
+        self.generation = 0
+        self._cond = threading.Condition()
+        self._streams = 0
+
+    def changed(self) -> None:
+        with self._cond:
+            self.generation += 1
+            self._cond.notify_all()
+
+    def wait_change(self, seen: int, timeout: float) -> int:
+        """Wait for a change after ``seen`` (or ``timeout``); returns the new generation."""
+        with self._cond:
+            if self.generation == seen and not self.closing.is_set():
+                self._cond.wait(timeout)
+            return self.generation
+
+    def open_stream(self) -> bool:
+        with self._cond:
+            if self._streams >= MAX_STREAMS:
+                return False
+            self._streams += 1
+            return True
+
+    def close_stream(self) -> None:
+        with self._cond:
+            self._streams -= 1
+
+    def shutdown(self) -> None:
+        self.closing.set()
+        self.changed()  # wake the live streams so they end
+        super().shutdown()
 
 
 class ApiServer:
@@ -193,6 +362,7 @@ class ApiServer:
         self.error = ""
         self.host = ""
         self.port = 0
+        self.token = ""  # optional; read on each request, so a change applies at once
 
     @property
     def running(self) -> bool:
@@ -204,7 +374,7 @@ class ApiServer:
             return self.error
         self.stop()
         try:
-            self._server = _Server((host, int(port)), self._call)
+            self._server = _Server((host, int(port)), self._call, lambda: self.token)
         except OSError as exc:
             self.error = f"port {port} indisponible ({exc.strerror or exc})"
             log.warning("API non démarrée: %s", self.error)

@@ -230,6 +230,7 @@ def normalize_config(config) -> dict:
     api["enabled"] = bool(api.get("enabled", False))
     api["port"] = _int(api.get("port"), DEFAULT_API_PORT, 1, 65535)
     api["localOnly"] = bool(api.get("localOnly", False))
+    api["token"] = _str(api.get("token")).strip()  # optional: empty = open, like py-intercom
     config["api"] = api
 
     updates = config.get("updates")

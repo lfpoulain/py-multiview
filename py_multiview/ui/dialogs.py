@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -518,12 +519,23 @@ class PreferencesDialog(QDialog):
         api_row.addWidget(self.api_local)
         api_row.addStretch(1)
         api.body.addLayout(api_row)
+        token_row = QHBoxLayout()
+        token_row.addWidget(field_label("Jeton"))
+        self.api_token = QLineEdit(config["api"].get("token", ""))
+        self.api_token.setPlaceholderText("facultatif : vide = accès libre")
+        self.api_token.setToolTip("Rempli, chaque requête doit porter l'en-tête\n"
+                                  "« Authorization: Bearer <jeton> » (à coller dans py-livedeck).")
+        token_row.addWidget(self.api_token, 1)
+        generate = button("Générer", variant="ghost")
+        generate.clicked.connect(lambda: self.api_token.setText(secrets.token_urlsafe(24)))
+        token_row.addWidget(generate)
+        api.body.addLayout(token_row)
         self.api_hint = label("", "Mono", wrap=True)
         self.api_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
         api.body.addWidget(self.api_hint)
         api.body.addWidget(
-            label("Sans mot de passe, comme les autres services pilotés par py-livedeck : "
-                  "à n'ouvrir que sur un réseau de confiance.", "Muted", wrap=True)
+            label("Sans jeton, l'API est ouverte à tout le réseau, comme les autres services pilotés par "
+                  "py-livedeck : à n'ouvrir que sur un réseau de confiance.", "Muted", wrap=True)
         )
         self.api_enabled.stateChanged.connect(self._refresh_api_hint)
         self.api_port.valueChanged.connect(self._refresh_api_hint)
@@ -623,7 +635,8 @@ class PreferencesDialog(QDialog):
             return
         host = "127.0.0.1" if self.api_local.isChecked() else (self.main.host_ip or "127.0.0.1")
         base = f"http://{host}:{self.api_port.value()}"
-        self.api_hint.setText(f"{base}/status\nPOST {base}/sender/toggle")
+        self.api_hint.setText(f"py-livedeck : {base}  (API Stream Deck, {base}/api/deck/state)\n"
+                              f"Requête simple : POST {base}/sender/toggle")
 
     def _reset(self) -> None:
         if self.main.reset_configuration():
@@ -637,6 +650,7 @@ class PreferencesDialog(QDialog):
         config["api"]["enabled"] = self.api_enabled.isChecked()
         config["api"]["port"] = self.api_port.value()
         config["api"]["localOnly"] = self.api_local.isChecked()
+        config["api"]["token"] = self.api_token.text().strip()
         config["autoStartReceiver"] = self.auto_rx.isChecked()
         config["autoStartSender"] = self.auto_tx.isChecked()
         config["closeToMinimize"] = self.close_minimizes.isChecked()

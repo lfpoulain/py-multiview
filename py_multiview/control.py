@@ -10,7 +10,7 @@ holds a fixed label, not a generated identifier.
 
 from __future__ import annotations
 
-from . import __version__, omtlib
+from . import __version__, deck, omtlib
 from .api import ApiError, bad_value, not_found
 from .process import Status
 
@@ -155,6 +155,14 @@ class Control:
 
     def sources(self) -> list[str]:
         return omtlib.discover()
+
+    # -- /api/deck (orchestream-v2 contract) -------------------------------
+
+    def deck_state(self) -> dict:
+        return deck.build_state(self.status(), token_set=bool(self.config.get("api", {}).get("token")))
+
+    def deck_commands(self) -> list[dict]:
+        return deck.build_commands(self.status(), with_values=True)
 
     # -- commands ----------------------------------------------------------
 

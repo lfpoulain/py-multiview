@@ -108,7 +108,7 @@ Le repli FFmpeg est un `ffplay -nodisp -vn`, qui jette les trames vidéo dès le
 
 L'API (`api.py`) est un `ThreadingHTTPServer` de la bibliothèque standard : aucune dépendance ajoutée. Son routage est une fonction pure, donc testable sans ouvrir de socket, et les commandes (`control.py`) **ne s'exécutent jamais sur le fil HTTP** : chaque requête est postée à l'interface par un signal Qt en connexion différée, qui possède le moteur, puis attend le résultat. Le moteur n'est ainsi jamais manipulé par deux fils à la fois.
 
-Le contrat suit celui des services que py-livedeck pilote déjà — `GET /status` renvoyant tout l'état avec une clé `connected`, commandes `POST /<objet>/<id>/<verbe>` à corps vide, réponse qui réémet l'état. Les détails sont dans [l'API de pilotage local](api.md).
+Deux contrats cohabitent. **`/api/deck`** (`deck.py`) reprend l'API Stream Deck d'orchestream-v2, commune à l'écosystème : le serveur décrit lui-même chaque touche (texte, couleur, allumée, disponible ou non) et pousse les changements par un flux SSE, si bien que py-livedeck n'a rien de propre à py-multiview en dur. Le flux relit l'état chaque seconde, et aussitôt après une commande ; chaque lecture passe elle aussi par le fil de l'interface. Les **routes d'origine** — `GET /status` avec une clé `connected`, `POST /<objet>/<id>/<verbe>` à corps vide — restent pour les boutons existants et Companion. Un jeton facultatif protège les deux. Les détails sont dans [l'API de pilotage local](api.md).
 
 ## Routage multicast
 

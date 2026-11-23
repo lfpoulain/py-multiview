@@ -117,6 +117,7 @@ def test_toggle_is_resolved_against_the_current_state():
 
 def test_api_settings_have_safe_defaults():
     api = normalize_config({})["api"]
-    assert api == {"enabled": False, "port": 5090, "localOnly": False}
+    assert api == {"enabled": False, "port": 5090, "localOnly": False, "token": ""}
+    assert normalize_config({"api": {"token": "  abc "}})["api"]["token"] == "abc"
     assert normalize_config({"api": {"port": 99999}})["api"]["port"] == 65535  # borné
     assert normalize_config({"api": {"port": "nope"}})["api"]["port"] == 5090  # défaut

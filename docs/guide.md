@@ -179,11 +179,13 @@ La fenêtre se déplace à la souris. Fermer la fenêtre depuis l'application ou
 
 Cocher *Ouvrir l'API locale*, décocher *Ce poste uniquement* pour y accéder depuis une autre machine. L'adresse à recopier dans le pupitre est affichée juste en dessous.
 
-Exemple de bouton py-livedeck, action **Requête HTTP / curl** : méthode `POST`, URL `http://<ip-du-poste>:5090/sender/toggle`, corps vide.
+py-multiview parle la même **API Stream Deck** qu'orchestream-v2 (`/api/deck`) : il décrit lui-même ses touches — un flux, son état, sa couleur, grisé avec la raison s'il ne peut pas démarrer — et les met à jour en direct. Un nouveau flux ou une nouvelle route apparaît dans le pupitre sans rien y régler.
+
+Exemple de bouton simple, action **Requête HTTP / curl** : méthode `POST`, URL `http://<ip-du-poste>:5090/sender/toggle`, corps vide.
 
 Les routes complètes, le format des réponses et les codes d'erreur sont dans [l'API de pilotage local](api.md).
 
-L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-livedeck : à n'ouvrir que sur un réseau de confiance. Elle est fermée par défaut.
+Le **jeton** est facultatif. Vide, l'API est ouverte à tout le réseau, comme les autres services pilotés par py-livedeck : à n'ouvrir que sur un réseau de confiance. Rempli (bouton *Générer*), chaque requête doit le porter dans l'en-tête `Authorization: Bearer <jeton>`. L'API est fermée par défaut.
 
 ## Préférences
 
@@ -192,7 +194,7 @@ L'API n'a **pas de mot de passe**, comme les autres services pilotés par py-liv
 | **Ne jamais afficher de flux sur l'écran principal** | Réserve l'écran de travail : il n'est pas proposé dans les cartes ni utilisé par Auto-assigner. |
 | **Décodage vidéo** | Processeur (recommandé, tous codecs), ou GPU NVIDIA / Intel / AMD pour soulager le processeur avec beaucoup de flux **H.264**. Seuls les décodeurs disponibles sur le poste sont proposés. |
 | **Émettre en direct par libomt** | **Décoché par défaut** : l'écran est capturé et publié par FFmpeg (gdigrab), le chemin éprouvé. Coché, libomt émet sans processus intermédiaire — plus léger, mais l'image est noire sur certaines machines. |
-| **Pilotage à distance** | Ouvre l'API HTTP locale, son port, et la restriction à ce poste. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
+| **Pilotage à distance** | Ouvre l'API HTTP locale, son port, la restriction à ce poste et le jeton facultatif. Voir [Piloter depuis un pupitre](#piloter-depuis-un-pupitre). |
 | **Mises à jour** | Recherche automatique des nouvelles versions, et vérification à la demande. Voir [Mises à jour](#mises-à-jour). |
 | **Fenêtre** | La croix réduit la fenêtre au lieu de quitter (activé par défaut). |
 | **Au lancement** | Démarre automatiquement la réception et/ou l'émission. Les sources ou écrans absents au démarrage sont repris dès qu'ils arrivent. |
