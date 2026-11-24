@@ -188,8 +188,9 @@ def test_sender_starts_even_when_the_sound_cannot_be_captured(monkeypatch):
     engine = make_engine({"sender": {"displayId": "main", "audioSource": "loopback"}})
     assert engine.start_sender() is None
     spec = engine.sup.running["sender"]
-    assert spec.args[spec.args.index("pipe:0") - 5:spec.args.index("pipe:0")] == ["-ar", "48000", "-ac", "2", "-i"]
     assert isinstance(spec.stdin_feeder, audio.PipeFeeder)
+    assert (spec.stdin_feeder.rate, spec.stdin_feeder.channels) == (48000, 2)
+    assert spec.args[spec.args.index("-max_size") + 1] == str(960 * 2 * 4)
 
 
 def test_sender_pipe_follows_the_device_format(monkeypatch):
@@ -199,7 +200,7 @@ def test_sender_pipe_follows_the_device_format(monkeypatch):
     assert engine.start_sender() is None
     spec = engine.sup.running["sender"]
     args = spec.args
-    assert args[args.index("pipe:0") - 7:args.index("pipe:0")] == ["-f", "f32le", "-ar", "44100", "-ac", "6", "-i"]
+    assert args[args.index("-max_size") + 1] == str(882 * 6 * 4)
     feeder = spec.stdin_feeder
     assert (feeder.source, feeder.rate, feeder.channels) == ("out:Enceintes 5.1", 44100, 6)
     # Reconcile runs twice per second: the same feeder is kept, so its state

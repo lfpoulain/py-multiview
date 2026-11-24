@@ -342,15 +342,17 @@ def build_route_command(ffmpeg: Path, route: dict, localaddr: str = "") -> list[
     ]
 
 
-def pipe_audio_input_args(rate: int, channels: int) -> list[str]:
-    """Raw float PCM written on stdin by audio.PipeFeeder.
+def audio_packet_frames(rate: int) -> int:
+    """Frames per channel in a 20 ms packet at the given sample rate."""
+    return max(1, round(rate / 50))
 
-    Raw PCM has nothing to probe, yet FFmpeg would read five seconds of it
-    before sending the first picture: the probe is cut to nothing.
-    """
+
+def pipe_audio_input_args(rate: int, channels: int) -> list[str]:
+    """The streaming WAV header carries the format; bound reads to one audio packet."""
     return [
         "-probesize", "32", "-analyzeduration", "0",
-        "-f", "f32le", "-ar", str(int(rate)), "-ac", str(int(channels)), "-i", "pipe:0",
+        "-f", "wav", "-ignore_length", "1", "-max_size", str(audio_packet_frames(rate) * channels * 4),
+        "-i", "pipe:0",
     ]
 
 
@@ -358,29 +360,31 @@ def dshow_audio_input_args(device: str) -> list[str]:
     return ["-f", "dshow", "-audio_buffer_size", "50", "-i", f"audio={device}"]
 
 
-AUDIO_FRAME = 960  # samples per audio frame sent: 20 ms at the 48 kHz OMT carries
-
-
 def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input: list[str] | None = None) -> list[str]:
+    fps = max(1, int(sender["fps"]))
+    clock_output = sender.get("clockOutput", True)
     if audio_input:
+        resample = "aresample=48000"
+        if "dshow" in audio_input:
+            resample += ":async=1:min_hard_comp=0.100:first_pts=0"
+        # With libomt pacing, both clocks sleep on the same muxer thread.
+        # Flushing one stream too far ahead stalls the other. Allow the
+        # startup lead and at least one video interval for timestamp sorting.
+        video_interval_us = 1_000_000 // fps
+        interleave_us = max(500_000, video_interval_us + 20_000) if clock_output else 1
         audio = [
             "-thread_queue_size", "1024", *audio_input,
             "-map", "0:v:0", "-map", "1:a:0",
-            # OMT carries 48 kHz audio. Capture timestamps jitter by a few
-            # milliseconds (dshow) and drift against the system clock, so the
-            # resampler stretches smoothly and only cuts/pads past 100 ms of
-            # real drift. A higher "async" would re-time on every jitter spike
-            # and audibly warble the sound.
-            #
-            # Then 20 ms frames: FFmpeg reads raw PCM 4096 samples at a time,
-            # and the receiver would get its sound in 85 ms blocks, too coarse
-            # for the few tens of milliseconds a mixer keeps in hand.
-            "-af", f"aresample=async=1:min_hard_comp=0.100:first_pts=0,asetnsamples=n={AUDIO_FRAME}:p=0",
+            # Only DirectShow supplies device timestamps. The pipe already
+            # follows the system clock. Packetise after conversion to 48 kHz.
+            "-af", f"{resample},asetnsamples=n={audio_packet_frames(48000)}:p=0",
             "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
-            # Never hold an audio packet back waiting for the matching video
-            # frame: gdigrab stalls would otherwise release the sound in bursts.
-            "-max_interleave_delta", "0",
+            "-max_interleave_delta", str(interleave_us),
         ]
+        if not clock_output:
+            # Prefer the already paced audio in the interleaver when gdigrab
+            # is between pictures. audio_preload changes order, not the PTS.
+            audio += ["-audio_preload", str(max(60_000, video_interval_us + 20_000))]
     else:
         audio = ["-map", "0:v:0", "-an"]
     return [
@@ -388,7 +392,7 @@ def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input:
         "-nostats", "-progress", "pipe:1", "-stats_period", "0.5",
         "-thread_queue_size", "512",
         "-f", "gdigrab",
-        "-framerate", str(int(sender["fps"])),
+        "-framerate", str(fps),
         "-offset_x", str(int(display["x"])),
         "-offset_y", str(int(display["y"])),
         "-video_size", f"{int(display['width'])}x{int(display['height'])}",
@@ -399,10 +403,8 @@ def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input:
         "-c:v", "wrapped_avframe",
         # Constant cadence: gdigrab jitter otherwise yields duplicate timestamps.
         "-fps_mode", "cfr",
-        # With the clock, libomt hands the frames over at their own rate: one
-        # audio frame every 20 ms. Without it they leave as FFmpeg reads them,
-        # in bursts a tenth of a second apart, picture included.
-        "-clock_output", "1" if sender.get("clockOutput", True) else "0",
+        # Let the operator choose between libomt's clock and FFmpeg's timestamps.
+        "-clock_output", "1" if clock_output else "0",
         "-reference_level", f"{float(sender.get('referenceLevel', 1.0)):.3f}",
         "-f", "libomt", str(sender["name"]),
     ]

@@ -1,4 +1,5 @@
 import ctypes
+import threading
 from array import array
 
 from py_multiview import omtlib
@@ -72,3 +73,46 @@ def test_input_sources_accept_both_prefixes():
     for source in ("", "loopback", "in:CABLE Output", "dshow:Micro"):
         assert normalize_config({"sender": {"audioSource": source}})["sender"]["audioSource"] == source
     assert normalize_config({"sender": {"audioSource": "nope"}})["sender"]["audioSource"] == ""
+
+
+def test_slow_video_encode_allows_audio_and_close_waits_for_video(monkeypatch):
+    encoding, release_video, audio_sent, destroyed = (threading.Event() for _ in range(4))
+
+    class Lib:
+        def omt_send_create(self, name, quality):
+            return 1
+
+        def omt_send(self, handle, frame):
+            if frame._obj.Type == omtlib.FRAME_VIDEO:
+                encoding.set()
+                release_video.wait(3)
+            else:
+                audio_sent.set()
+            assert not destroyed.is_set()
+            return 1
+
+        def omt_send_destroy(self, handle):
+            destroyed.set()
+
+    monkeypatch.setattr(omtlib, "load", Lib)
+    sender = omtlib.Sender("Diagnostic")
+    video = threading.Thread(target=sender.send_video, args=(
+        ctypes.create_string_buffer(4), 1, 1, 4, omtlib.CODEC_BGRA, 30, 0,
+    ))
+    sound = threading.Thread(target=sender.send_audio, args=(bytes(7680), 48000, 2, 0))
+    close = threading.Thread(target=sender.close)
+    video.start()
+    try:
+        assert encoding.wait(1)
+        sound.start()
+        assert audio_sent.wait(1)
+        close.start()
+        assert not destroyed.wait(0.05)
+    finally:
+        release_video.set()
+        video.join()
+        for thread in (sound, close):
+            if thread.ident is not None:
+                thread.join()
+    assert destroyed.is_set()
+    assert not sender.send_audio(bytes(7680), 48000, 2, 200000)

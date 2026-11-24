@@ -1,9 +1,13 @@
+import struct
+import sys
 import threading
 import time
 from array import array
 from pathlib import Path
 
-from py_multiview import audio
+import pytest
+
+from py_multiview import audio, native
 from py_multiview.audio import parse_dshow_audio
 from py_multiview.config import normalize_config
 from py_multiview.ffmpeg import build_sender_command, dshow_audio_input_args, pipe_audio_input_args
@@ -37,12 +41,11 @@ def test_sender_without_audio():
 def test_sender_with_captured_sound_reads_stdin():
     args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], pipe_audio_input_args(44100, 2))
     assert args[args.index("pipe:0") - 1] == "-i"
-    assert args[args.index("-ar") + 1] == "44100"  # input rate, resampled to 48 kHz on output
-    # Raw PCM is not probed: ffmpeg would otherwise hold the picture for seconds.
+    # The WAV header supplies the device format; the demuxer reads at most 20 ms.
     pipe = args.index("pipe:0")
     assert args[args.index("-probesize") + 1] == "32" and args.index("-probesize") < pipe
     assert args[args.index("-analyzeduration") + 1] == "0"
-    assert args[args.index("f32le") - 1] == "-f"
+    assert args[pipe - 7:pipe] == ["-f", "wav", "-ignore_length", "1", "-max_size", str(882 * 2 * 4), "-i"]
     assert "-an" not in args and "1:a:0" in args
     assert args[-3:-1] == ["-f", "libomt"]
 
@@ -52,18 +55,31 @@ def test_sender_with_dshow_device():
     assert "audio=Micro (USB)" in args
 
 
-def test_sender_audio_is_never_held_back():
-    args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], dshow_audio_input_args("Micro"))
-    # Smooth drift compensation only, and no interleaving delay behind the video.
-    assert args[args.index("-af") + 1].startswith("aresample=async=1:min_hard_comp=0.100:first_pts=0,")
-    assert args[args.index("-max_interleave_delta") + 1] == "0"
+def test_sender_limits_interleaving_according_to_the_output_clock():
+    sender = normalize_config({})["sender"]
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, sender, dshow_audio_input_args("Micro"))
+    assert args[args.index("-af") + 1].startswith("aresample=48000:async=1:min_hard_comp=0.100:first_pts=0,")
+    assert args[args.index("-max_interleave_delta") + 1] == "500000"
+    assert "-audio_preload" not in args
+    # The libomt clocks sleep on one thread: keep a full video interval
+    # sortable even for a slow picture. With explicit PTS, bound the wait.
+    sender["fps"] = 1
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, sender, pipe_audio_input_args(48000, 2))
+    assert int(args[args.index("-max_interleave_delta") + 1]) >= 1_000_000
+    sender["clockOutput"] = False
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, sender, pipe_audio_input_args(48000, 2))
+    assert args[args.index("-max_interleave_delta") + 1] == "1"
+    assert int(args[args.index("-audio_preload") + 1]) >= 1_000_000
+    sender["fps"] = 30
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, sender, pipe_audio_input_args(48000, 2))
+    assert args[args.index("-audio_preload") + 1] == "60000"
 
 
 def test_sender_audio_leaves_in_20_ms_frames_on_the_omt_clock():
     # FFmpeg reads raw PCM 4096 samples at a time: sent as they are, the
     # receiver gets 85 ms blocks in bursts and runs dry between two of them.
     args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], pipe_audio_input_args(48000, 2))
-    assert args[args.index("-af") + 1].endswith(",asetnsamples=n=960:p=0")
+    assert args[args.index("-af") + 1] == "aresample=48000,asetnsamples=n=960:p=0"
     assert args[args.index("-clock_output") + 1] == "1"
 
 
@@ -201,6 +217,10 @@ class FakePipe:
         self.data += chunk
         self.first_write.set()
 
+    @property
+    def pcm(self):
+        return bytes(self.data[44:])
+
     def flush(self):
         pass
 
@@ -222,8 +242,11 @@ def test_pipe_is_fed_even_when_nothing_can_be_captured(monkeypatch):
     try:
         assert pipe.first_write.wait(2.0)
         time.sleep(0.4)
-        assert len(pipe.data) % 8 == 0 and set(pipe.data) == {0}
-        assert len(pipe.data) >= int(0.2 * 48000) * 8  # real-time silence, not just the first block
+        assert struct.unpack("<4sI4s4sIHHIIHH4sI", pipe.data[:44]) == (
+            b"RIFF", 0xffffffff, b"WAVE", b"fmt ", 16, 3, 2, 48000, 384000, 8, 32, b"data", 0,
+        )
+        assert len(pipe.pcm) % (960 * 8) == 0 and set(pipe.pcm) == {0}
+        assert len(pipe.pcm) >= int(0.2 * 48000) * 8  # real-time silence, not just the first block
         assert "absent.exe" in feeder.audio_problem and feeder.audio_level() == 0.0
         assert any("absent.exe" in line for line in lines)
     finally:
@@ -246,11 +269,10 @@ def test_pipe_forwards_captured_samples(monkeypatch):
             time.sleep(0.01)
         capture.on_frames(float_bytes(0.5, -0.5) * 480, 480)
         deadline = time.time() + 2
-        while audio.peak(bytes(pipe.data)) < 0.5 and time.time() < deadline:
+        while audio.peak(pipe.pcm) < 0.5 and time.time() < deadline:
             time.sleep(0.01)
-        # Forwarded at once, a frame or two apart at most (the clock steering).
-        loud = [v for v in array("f", bytes(pipe.data)) if v]
-        assert 2 * 470 <= len(loud) <= 2 * 490 and set(loud) == {0.5, -0.5}
+        loud = [v for v in array("f", pipe.pcm) if v]
+        assert loud == [0.5, -0.5] * 480  # a short isolated sound survives priming
         assert feeder.audio_level() == 0.5 and feeder.audio_problem == ""
     finally:
         stop()
@@ -320,7 +342,7 @@ def test_steady_stream_follows_the_clock_without_a_click():
         assert card.breaks() == 0, drift
         assert card.stream.resyncs == 0 and card.stream.dropped == 0
         written, due = card.stream.written, 120 * 48000
-        assert abs(written - due) < 0.06 * 48000, (drift, written - due)
+        assert abs(written - (due - audio.SteadyStream.PREFILL * 48000)) <= card.chunk
         if drift:
             # What was added or removed is the drift itself (4608 frames
             # here), give or take the few tens of ms of settling at the start.
@@ -339,7 +361,8 @@ def test_steady_stream_makes_up_silence_only_when_the_source_stops():
     assert card.stream.written - silent > 0.8 * 48000
     card.run(2.0)
     assert card.breaks() == 0 and card.stream.resyncs == 0
-    assert abs(card.stream.written - (card.now - 1000.0) * 48000) < 0.07 * 48000
+    due = (card.now - 1000.0 - audio.SteadyStream.PREFILL) * 48000
+    assert abs(card.stream.written - due) <= card.chunk + 1
 
 
 def test_steady_stream_jumps_once_after_a_long_hole():
@@ -349,13 +372,161 @@ def test_steady_stream_jumps_once_after_a_long_hole():
     card.stream.push(array("f", [0.5] * 960).tobytes())
     data = card.stream.pull()
     # The hour is skipped, not sent as silence; the stream is on time again.
-    assert len(data) <= 4 * (48000 + 960) and card.stream.resyncs == 1
-    assert abs(card.stream.written - (card.now - 1000.0) * 48000) < 0.07 * 48000
+    assert len(data) == 4 * card.chunk and card.stream.resyncs == 1
+    due = (card.now - 1000.0 - audio.SteadyStream.PREFILL) * 48000
+    assert abs(card.stream.written - due) <= card.chunk
 
 
 def test_steady_stream_keeps_half_a_second_when_nobody_pulls():
-    stream = audio.SteadyStream(48000, 2, clock=lambda: 0.0)
+    now = 0.0
+    stream = audio.SteadyStream(48000, 2, clock=lambda: now)
     for _ in range(100):
         stream.push(bytes(8 * 960))
     assert stream.dropped == 100 * 960 - 24000
-    assert len(stream.pull()) <= 8 * 24000
+    now = stream.PREFILL
+    assert len(stream.pull()) == 8 * 960
+
+
+def test_oversized_callback_and_late_consumer_keep_only_recent_audio():
+    now = 0.0
+    stream = audio.SteadyStream(48000, 2, clock=lambda: now)
+    now = 2.0
+    recent_frames = round(stream.PREFILL * 48000)
+    recent = float_bytes(0.25, -0.25) * recent_frames
+    stream.push(bytes(8 * 48000) + recent)
+    assert stream.dropped == 48000 + recent_frames - 24000
+    assert stream.pull() == recent[:960 * 8]
+    assert stream.resyncs == 1 and stream.dropped == 48000
+    assert not stream.pull()  # no catch-up burst
+    assert 0 < stream.delay() <= 0.021
+
+
+def test_batched_capture_preserves_every_stereo_sample_at_regular_deadlines():
+    rate, n = 48000, 960
+    now = 0.0
+    stream = audio.SteadyStream(rate, 2, clock=lambda: now)
+    # An asymmetric waveform reveals inserted silence, reordered frames and
+    # crossed channels. Six 10 ms capture callbacks wake up together, with
+    # another 0..15 ms of scheduler jitter across successive batches.
+    pcm = array("f", (v for i in range(60 * 48 * 20) for v in (i + 1, -i - 1))).tobytes()
+    arrivals = {60 * (i + 1) + (0, 15, 5, 10)[i % 4]: i for i in range(20)}
+    received, times = bytearray(), []
+    start_ms = round(stream.PREFILL * 1000)
+    deadlines = list(range(start_ms, start_ms + 1200, 20))
+    for ms in range(deadlines[-1] + 1):
+        now = ms / 1000
+        if ms in arrivals:
+            start = arrivals[ms] * 6 * 480 * 8
+            for j in range(6):
+                offset = start + j * 480 * 8
+                stream.push(pcm[offset:offset + 480 * 8])
+        data = stream.pull()
+        if data:
+            assert len(data) == n * 8
+            times.append(ms)
+            received.extend(data)
+    assert times == deadlines
+    assert received == pcm
+    assert stream.adjusted == stream.resyncs == stream.dropped == 0
+
+
+@pytest.mark.parametrize("ppm", [200, -800])
+def test_batched_capture_with_drift_keeps_a_whole_packet_in_reserve(ppm):
+    # At +200 ppm the six-callback batch eventually arrives just AFTER
+    # a playout deadline. With only 80 ms including the outgoing packet,
+    # the stream was two frames short at 66.72 s, then re-primed in silence.
+    packet = float_bytes(0.25, -0.25) * 960
+    chunk = packet[:480 * 8]
+    stream = audio.SteadyStream(48000, 2, origin=0.0, clock=lambda: ms / 1000)
+    card_rate = 48000 * (1 + ppm * 1e-6)
+    batch = 1
+    arrival = 2880 / card_rate
+    jitter_ms = (0, 15, 5, 10, 2)
+    for ms in range(0, 70001, 5):
+        if ms / 1000 >= arrival:
+            for _ in range(6):
+                stream.push(chunk)
+            batch += 1
+            arrival = batch * 2880 / card_rate + jitter_ms[(batch - 1) % len(jitter_ms)] / 1000
+        data = stream.pull()
+        if ms >= 200 and ms % 20 == 0:
+            assert data == packet, ms
+    assert stream.dropped == stream.resyncs == 0
+
+
+def test_native_audio_keeps_sending_during_slow_open_and_accepts_first_new_format_packet(monkeypatch):
+    opening, release, silent_packets, heard = (threading.Event() for _ in range(4))
+
+    class Capture(FakeCapture):
+        def start(self, on_frames):
+            on_frames(float_bytes(0.5) * 882, 882)  # delivered before start returns
+
+    def open_capture(_source):
+        opening.set()
+        assert release.wait(3)
+        return Capture("Carte", 44100, 1)
+
+    packets = []
+
+    class Sender:
+        def send_audio(self, data, rate, channels, timestamp):
+            packets.append((rate, channels, timestamp, len(data)))
+            if len(packets) == 4 and not any(data):
+                silent_packets.set()
+            if any(data):
+                assert data == float_bytes(0.5) * 882
+                heard.set()
+
+    monkeypatch.setattr(audio, "open_capture", open_capture)
+    pump = native._AudioPump(Sender(), "in:Carte", lambda _line: None)
+    pump.start()
+    try:
+        assert opening.wait(2) and silent_packets.wait(2)
+        release.set()
+        assert heard.wait(2)
+    finally:
+        release.set()
+        pump.close()
+    assert packets[0][:2] == (48000, 2) and packets[-1][:2] == (44100, 1)
+    for i, (rate, channels, timestamp, size) in enumerate(packets):
+        assert timestamp == i * 200000
+        assert size == (rate // 50) * channels * 4
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WASAPI is a Windows interface")
+def test_wasapi_releases_its_packet_before_calling_the_audio_pipeline(monkeypatch):
+    import ctypes
+
+    from py_multiview import proc_audio
+
+    capture = proc_audio.ProcessCapture(1)
+    payload = float_bytes(0.25, -0.25)
+    buffer = ctypes.create_string_buffer(payload)
+    events = []
+
+    def next_packet(_capture, size):
+        size._obj.value = 1
+        return 0
+
+    def get_buffer(_capture, data, frames, flags, pos, qpc):
+        data._obj.value = ctypes.addressof(buffer)
+        frames._obj.value = 1
+        events.append("acquire")
+        return 0
+
+    def release(_capture, count):
+        assert count == 1
+        events.append("release")
+        buffer.raw = bytes(len(buffer))  # driver may reuse the memory immediately
+
+    def delivered(data, count):
+        capture._stop.set()
+        events.append((data, count))
+
+    monkeypatch.setattr(ctypes.windll.kernel32, "WaitForSingleObject", lambda *_args: 0)
+    monkeypatch.setattr(proc_audio, "_cc_next_packet_size", next_packet)
+    monkeypatch.setattr(proc_audio, "_cc_get_buffer", get_buffer)
+    monkeypatch.setattr(proc_audio, "_cc_release_buffer", release)
+    capture._on_frames = delivered
+    capture._read_packets()
+    assert events == ["acquire", "release", (payload, 1)]

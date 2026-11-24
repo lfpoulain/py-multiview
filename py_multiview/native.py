@@ -37,7 +37,6 @@ from .process import (
 log = logging.getLogger(__name__)
 
 LOG_LINES = 300
-AUDIO_PUMP = 0.01  # seconds between audio flushes
 
 
 class NativeWorker:
@@ -327,43 +326,42 @@ class _AudioPump:
 
     def __init__(self, sender: omtlib.Sender, source: str, report, origin: float | None = None) -> None:
         self._sender = sender
-        self._origin = origin
-        self._stream: audio.SteadyStream | None = None
+        self._origin = time.perf_counter() if origin is None else origin
+        self._stream = audio.SteadyStream(*audio.PROGRAM_FORMAT, origin=self._origin)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self.live = audio.LiveCapture(source, self._on_frames, report)
+        self.live = audio.LiveCapture(source, self._on_frames, report, on_format=self._set_format)
+
+    def _set_format(self, rate: int, channels: int) -> None:
+        if (rate, channels) != (self._stream.rate, self._stream.channels):
+            self._stream = audio.SteadyStream(rate, channels, origin=self._origin)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="omt-audio")
         self._thread.start()
 
     def _on_frames(self, data: bytes, _frames: int) -> None:
-        stream = self._stream
-        if stream is not None:
-            stream.push(data)
+        self._stream.push(data)
 
     def _run(self) -> None:
-        generation = 0
-        stream = None
-        while not self._stop.is_set():
-            self.live.poll()
-            if self.live.format is not None and self.live.generation != generation:
-                # A capture just (re)opened, maybe in another format. The new
-                # stream shares the picture's origin, so it resumes where the
-                # clock is now.
-                generation = self.live.generation
-                rate, channels = self.live.format
-                if stream is None or (stream.rate, stream.channels) != (rate, channels):
-                    stream = self._stream = audio.SteadyStream(rate, channels, origin=self._origin)
-            if stream is not None:
+        stream = self._stream
+        self.live.start()
+        try:
+            while not self._stop.is_set():
+                current = self._stream
+                if current is not stream:
+                    current.continue_from(stream)
+                    stream = current
                 data = stream.pull()
                 if data:
                     self._publish(stream, data)
-            self._stop.wait(AUDIO_PUMP)
+                self._stop.wait(stream.delay())
+        finally:
+            self.live.close()
 
     def _publish(self, stream: audio.SteadyStream, interleaved: bytes) -> None:
         samples = len(interleaved) // stream.frame_bytes
-        timestamp = int((stream.written - samples) * omtlib.TICKS_PER_SECOND / stream.rate)
+        timestamp = (stream.written - samples) * omtlib.TICKS_PER_SECOND // stream.rate
         planar = omtlib.interleaved_to_planar(interleaved, stream.channels)
         self._sender.send_audio(planar, stream.rate, stream.channels, timestamp)
 
@@ -371,5 +369,4 @@ class _AudioPump:
         self._stop.set()
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
-        self.live.close()
+            thread.join()

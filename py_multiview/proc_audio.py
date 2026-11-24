@@ -20,6 +20,7 @@ frames through a callback, exactly like :class:`py_multiview.audio.FloatRecorder
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import logging
 import threading
@@ -35,6 +36,7 @@ VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK = "VAD\\Process_Loopback"
 AUDCLNT_SHAREMODE_SHARED = 0
 AUDCLNT_STREAMFLAGS_LOOPBACK = 0x00020000
 AUDCLNT_STREAMFLAGS_EVENTCALLBACK = 0x00040000
+AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY = 0x1
 AUDCLNT_BUFFERFLAGS_SILENT = 0x2
 
 PROCESS_LOOPBACK_INCLUDE = 0
@@ -283,8 +285,6 @@ class ProcessCapture:
     is imposed: 32-bit float, the format WASAPI works in internally.
     """
 
-    CHUNK = 0.02  # seconds
-
     def __init__(self, pid: int, exclude: bool = False, rate: int = 48000, channels: int = 2) -> None:
         self.pid = int(pid)
         self.exclude = bool(exclude)
@@ -296,6 +296,7 @@ class ProcessCapture:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._on_frames = None
+        self._com_initialized = False
 
     # -- activation --------------------------------------------------------
 
@@ -339,8 +340,9 @@ class ProcessCapture:
     def start(self, on_frames) -> None:
         """``on_frames(data: bytes, samples: int)`` with interleaved float32."""
         ctypes.oledll.ole32.CoInitializeEx(None, 0)  # STA not required; MTA is fine
+        self._com_initialized = True
         self._on_frames = on_frames
-        client = self._activate()
+        self._client = client = self._activate()
 
         fmt = WAVEFORMATEX()
         fmt.wFormatTag = WAVE_FORMAT_IEEE_FLOAT
@@ -356,68 +358,91 @@ class ProcessCapture:
                             AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
                             duration, 0, byref(fmt), None)
         if hr:
-            _release(client)
             raise OSError(f"Initialisation de la capture impossible (0x{hr & 0xFFFFFFFF:08x})")
 
+        ctypes.windll.kernel32.CreateEventW.restype = wintypes.HANDLE
         self._event = ctypes.windll.kernel32.CreateEventW(None, False, False, None)
+        if not self._event:
+            raise ctypes.WinError()
         _ac_set_event_handle(client, self._event)
         capture = c_void_p()
         hr = _ac_get_service(client, byref(IID_IAudioCaptureClient), byref(capture))
         if hr or not capture:
-            _release(client)
             raise OSError(f"Service de capture indisponible (0x{hr & 0xFFFFFFFF:08x})")
+        self._capture = capture
         _ac_start(client)
-        self._client, self._capture = client, capture
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="proc-audio", daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
         ctypes.oledll.ole32.CoInitializeEx(None, 0)
+        try:
+            self._read_packets()
+        except OSError as exc:
+            log.warning("Lecture WASAPI du programme interrompue : %s", exc)
+        finally:
+            ctypes.windll.ole32.CoUninitialize()
+
+    def _read_packets(self) -> None:
         frame_bytes = self.channels * 4
         data = c_void_p()
         frames = c_uint32()
         flags = wintypes.DWORD()
-        pos = ctypes.c_ulonglong()
-        qpc = ctypes.c_ulonglong()
+        seen_packet = False
+        discontinuities = 0
         while not self._stop.is_set():
-            # 100 ms: a program that plays nothing simply wakes us up for nothing
-            ctypes.windll.kernel32.WaitForSingleObject(self._event, 100)
+            ctypes.windll.kernel32.WaitForSingleObject(wintypes.HANDLE(self._event), 20)
             while not self._stop.is_set():
                 available = c_uint32()
                 if _cc_next_packet_size(self._capture, byref(available)) or not available.value:
                     break
-                if _cc_get_buffer(self._capture, byref(data), byref(frames), byref(flags),
-                                  byref(pos), byref(qpc)):
+                if _cc_get_buffer(self._capture, byref(data), byref(frames), byref(flags), None, None):
                     break
                 count = frames.value
-                if count:
+                try:
                     if flags.value & AUDCLNT_BUFFERFLAGS_SILENT or not data:
-                        chunk = b"\x00" * (count * frame_bytes)
+                        chunk = bytes(count * frame_bytes)
                     else:
                         chunk = ctypes.string_at(data, count * frame_bytes)
-                    try:
-                        if self._on_frames is not None:
+                finally:
+                    _cc_release_buffer(self._capture, count)
+                # The meter and the outgoing FIFO can now run without holding
+                # the WASAPI packet for another device period.
+                if count:
+                    if seen_packet and flags.value & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY:
+                        discontinuities += 1
+                        if discontinuities == 1 or discontinuities % 100 == 0:
+                            log.warning("Capture WASAPI du programme : %d discontinuité(s)", discontinuities)
+                    seen_packet = True
+                    if self._on_frames is not None:
+                        try:
                             self._on_frames(chunk, count)
-                    except Exception:
-                        log.exception("Traitement du son du programme interrompu")
-                _cc_release_buffer(self._capture, count)
+                        except Exception:
+                            log.exception("Traitement du son du programme interrompu")
+
+    def alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
     def close(self) -> None:
         self._stop.set()
         if self._event:
-            ctypes.windll.kernel32.SetEvent(self._event)
+            ctypes.windll.kernel32.SetEvent(wintypes.HANDLE(self._event))
         thread, self._thread = self._thread, None
         if thread is not None and thread.is_alive():
-            thread.join(timeout=2.0)
+            thread.join()
         if self._client:
-            _ac_stop(self._client)
+            with contextlib.suppress(OSError):
+                _ac_stop(self._client)
         for ref in ("_capture", "_client"):
             handle = getattr(self, ref, None)
             if handle:
                 _release(handle)
             setattr(self, ref, None)
         if self._event:
-            ctypes.windll.kernel32.CloseHandle(self._event)
+            ctypes.windll.kernel32.CloseHandle(wintypes.HANDLE(self._event))
             self._event = None
         self._on_frames = None
+        if self._com_initialized:
+            ctypes.windll.ole32.CoUninitialize()
+            self._com_initialized = False

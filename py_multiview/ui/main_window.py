@@ -64,9 +64,8 @@ SIDEBAR_WIDTH = 350
 UPDATE_FIRST_CHECK_MS = 5_000
 UPDATE_CHECK_EVERY_MS = 6 * 3600 * 1000
 CLOCK_TOOLTIP = (
-    "libomt remet les trames au récepteur à leur cadence : une trame de son toutes les 20 ms.\n"
-    "Décoché, son et image partent par paquets, comme FFmpeg les lit, et un récepteur\n"
-    "qui garde peu de son en réserve accroche. À laisser coché."
+    "Active le cadencement de la sortie FFmpeg par libomt.\n"
+    "Décoché, FFmpeg transmet ses propres horodatages."
 )
 PIXEL_FORMAT_LABELS = {
     "uyvy422": ("UYVY 4:2:2", "Recommandé : bon compromis qualité / bande passante"),

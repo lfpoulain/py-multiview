@@ -81,6 +81,7 @@ class OMTMediaFrame(ctypes.Structure):
 
 
 _lib: ctypes.CDLL | None = None
+_vmx: ctypes.CDLL | None = None
 _load_error = ""
 _load_lock = threading.Lock()
 
@@ -110,7 +111,7 @@ def _bind(lib: ctypes.CDLL) -> None:
 
 def load() -> ctypes.CDLL | None:
     """Load libomt once. Returns None (and remembers why) when unavailable."""
-    global _lib, _load_error
+    global _lib, _vmx, _load_error
     with _load_lock:
         if _lib is not None or _load_error:
             return _lib
@@ -121,9 +122,15 @@ def load() -> ctypes.CDLL | None:
             return None
         try:
             if sys.platform == "win32":
-                # libomt.dll resolves libvmx.dll next to it.
-                os.add_dll_directory(str(OMT_BIN_DIR))
-            lib = ctypes.CDLL(str(dll))
+                # libomt loads the video codec by bare name on the first
+                # frame, after the Python DLL search scope has closed.
+                with os.add_dll_directory(str(OMT_BIN_DIR)):
+                    vmx = OMT_BIN_DIR / "libvmx.dll"
+                    if vmx.is_file():
+                        _vmx = ctypes.CDLL(str(vmx))
+                    lib = ctypes.CDLL(str(dll))
+            else:
+                lib = ctypes.CDLL(str(dll))
             _bind(lib)
         except (OSError, AttributeError) as exc:
             _load_error = str(exc)
@@ -264,15 +271,16 @@ class Receiver:
 class Sender:
     """An OMT sender publishing video and audio under ``name``.
 
-    Video and audio are published from two different threads, so every call
-    into the library is serialised here.
+    libomt has separate audio and video send paths. Keep each path serial
+    and wait for both before destroying their shared handle.
     """
 
     def __init__(self, name: str, quality: int = QUALITY_DEFAULT) -> None:
         self._lib = load()
         if self._lib is None:
             raise RuntimeError(load_error() or "libomt indisponible")
-        self._lock = threading.Lock()
+        self._video_lock = threading.Lock()
+        self._audio_lock = threading.Lock()
         self._handle = self._lib.omt_send_create(name.encode("utf-8"), quality)
         if not self._handle:
             raise RuntimeError(f"Publication de « {name} » impossible")
@@ -280,12 +288,16 @@ class Sender:
     @property
     def address(self) -> str:
         buffer = ctypes.create_string_buffer(1024)
-        length = self._lib.omt_send_getaddress(self._handle, buffer, len(buffer))
+        with self._video_lock:
+            if not self._handle:
+                return ""
+            length = self._lib.omt_send_getaddress(self._handle, buffer, len(buffer))
         return buffer.value.decode("utf-8", errors="replace") if length > 0 else ""
 
     @property
     def connections(self) -> int:
-        return int(self._lib.omt_send_connections(self._handle))
+        with self._video_lock:
+            return int(self._lib.omt_send_connections(self._handle)) if self._handle else 0
 
     def send_video(self, data, width: int, height: int, stride: int, codec: int,
                    fps: int, timestamp: int) -> bool:
@@ -301,7 +313,7 @@ class Sender:
         frame.AspectRatio = width / height if height else 0.0
         frame.Data = ctypes.cast(data, c_void_p)
         frame.DataLength = stride * height
-        with self._lock:
+        with self._video_lock:
             if not self._handle:
                 return False
             return bool(self._lib.omt_send(self._handle, ctypes.byref(frame)))
@@ -320,13 +332,13 @@ class Sender:
         buffer = ctypes.create_string_buffer(planar, len(planar))
         frame.Data = ctypes.cast(buffer, c_void_p)
         frame.DataLength = len(planar)
-        with self._lock:
+        with self._audio_lock:
             if not self._handle:
                 return False
             return bool(self._lib.omt_send(self._handle, ctypes.byref(frame)))
 
     def close(self) -> None:
-        with self._lock:
+        with self._video_lock, self._audio_lock:
             handle, self._handle = getattr(self, "_handle", None), None
         if handle:
             self._lib.omt_send_destroy(handle)
