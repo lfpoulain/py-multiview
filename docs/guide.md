@@ -126,7 +126,7 @@ Dans le panneau **Émission OMT** :
 | **Cadence** | 1 à 60 images par seconde. |
 | **Format** | UYVY 4:2:2 (recommandé), BGRA 4:4:4 (couleurs complètes, plus de débit) ou YUV 10 bits. |
 | **Audio** | Le bouton ouvre le choix du son, rangé en trois familles avec une recherche : **Son du PC** (tout ce que joue le PC, ou une sortie précise), **Un programme** (ce programme seul, ou tout le PC sauf lui), **Une entrée** (micro, carte son, câble virtuel, bus vMix Audio). **Émettre sans son** coupe l'audio. |
-| **Horloge de sortie** | Cadence la sortie sur l'horloge OMT plutôt que sur la capture. |
+| **Horloge de sortie** | Cochée par défaut, à laisser cochée : libomt remet les trames au récepteur à leur cadence (une trame de son toutes les 20 ms). Décochée, son et image partent par paquets et un récepteur qui garde peu de son en réserve accroche. |
 
 L'audio est envoyé en 48 kHz stéréo. Changer un réglage pendant l'émission la relance aussitôt avec les nouveaux paramètres.
 
@@ -148,7 +148,9 @@ La liste propose les programmes qui ont une fenêtre ouverte. Quelques points à
 - avec *Tout le PC sauf lui*, si le programme ne tourne pas, c'est tout le son du PC qui est envoyé ;
 - il faut **Windows 10 build 20348 ou plus récent**. Sur une version antérieure, l'émission le signale et il faut passer par un câble virtuel.
 
-**Format** et **Horloge de sortie** sont grisés quand l'émission passe en direct par libomt, ce qui est le cas normal : la bibliothèque encode l'image elle-même. Ils ne servent qu'au repli FFmpeg, signalé par `OMT` au lieu de `OMT natif` dans la barre d'état.
+**Format** et **Horloge de sortie** règlent l'émission par FFmpeg, qui est le chemin par défaut. Ils ne sont grisés que si **Préférences → Émission OMT → Émettre en direct par libomt** est coché : la bibliothèque encode et cadence alors elle-même.
+
+Le son est calé en permanence sur l'horloge du PC : une carte son compte ses échantillons sur son propre quartz, qui ne tombe jamais exactement d'accord avec celui du PC. py-multiview compense cet écart en continu et sans à-coup, de sorte que le son ne se décale pas de l'image et ne saute pas, même après plusieurs heures.
 
 ## Écouter le retour du master
 

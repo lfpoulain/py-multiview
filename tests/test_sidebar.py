@@ -65,3 +65,34 @@ def test_summary_is_cut_instead_of_widening_the_column(qapp):
     assert label.toolTip() == label.full_text()  # the full message stays reachable
     label.set_full_text("court")
     assert label.text() == "court" and label.toolTip() == ""
+
+
+def test_output_clock_is_greyed_only_when_libomt_really_emits(qapp, monkeypatch):
+    # The bug this guards against: the box was greyed as soon as libomt could
+    # be loaded, although FFmpeg -- the default path, the one it drives -- was
+    # the one emitting. Nobody could turn the clock on any more.
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QSpinBox
+
+    from py_multiview.ui import main_window
+
+    monkeypatch.setattr(main_window.omtlib, "available", lambda: True)
+    window = SimpleNamespace(
+        config=normalize_config({}),
+        sender_name=QLineEdit(), sender_fps=QSpinBox(), sender_format=QComboBox(), sender_clock=QCheckBox(),
+        _fill_sender_displays=lambda: None, _show_sender_audio=lambda: None,
+    )
+    main_window.MainWindow.load_sender_fields(window)
+    assert window.sender_clock.isEnabled() and window.sender_clock.isChecked()
+    assert window.sender_format.isEnabled()
+    assert window.sender_clock.toolTip() == main_window.CLOCK_TOOLTIP
+
+    window.config["sender"]["native"] = True  # Préférences → Émettre en direct par libomt
+    main_window.MainWindow.load_sender_fields(window)
+    assert not window.sender_clock.isEnabled() and not window.sender_format.isEnabled()
+    assert "libomt" in window.sender_clock.toolTip()
+
+    window.config["sender"]["native"] = False
+    main_window.MainWindow.load_sender_fields(window)
+    assert window.sender_clock.isEnabled()

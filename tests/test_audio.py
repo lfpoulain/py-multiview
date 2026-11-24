@@ -55,8 +55,28 @@ def test_sender_with_dshow_device():
 def test_sender_audio_is_never_held_back():
     args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], dshow_audio_input_args("Micro"))
     # Smooth drift compensation only, and no interleaving delay behind the video.
-    assert args[args.index("-af") + 1] == "aresample=async=1:min_hard_comp=0.100:first_pts=0"
+    assert args[args.index("-af") + 1].startswith("aresample=async=1:min_hard_comp=0.100:first_pts=0,")
     assert args[args.index("-max_interleave_delta") + 1] == "0"
+
+
+def test_sender_audio_leaves_in_20_ms_frames_on_the_omt_clock():
+    # FFmpeg reads raw PCM 4096 samples at a time: sent as they are, the
+    # receiver gets 85 ms blocks in bursts and runs dry between two of them.
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, normalize_config({})["sender"], pipe_audio_input_args(48000, 2))
+    assert args[args.index("-af") + 1].endswith(",asetnsamples=n=960:p=0")
+    assert args[args.index("-clock_output") + 1] == "1"
+
+
+def test_output_clock_is_on_by_default_and_can_still_be_turned_off():
+    assert normalize_config({})["sender"]["clockOutput"] is True
+    # Written while the box was greyed out: nobody chose that False.
+    old = normalize_config({"sender": {"clockOutput": False}})["sender"]
+    assert old["clockOutput"] is True
+    old["clockOutput"] = False  # unticked since: remembered
+    again = normalize_config({"sender": old})["sender"]
+    assert again["clockOutput"] is False
+    args = build_sender_command(Path("ffmpeg"), DISPLAY, again)
+    assert args[args.index("-clock_output") + 1] == "0"
 
 
 # ---------------------------------------------------------------- capture
@@ -214,7 +234,7 @@ def test_pipe_is_fed_even_when_nothing_can_be_captured(monkeypatch):
     assert pipe.closed
 
 
-def test_pipe_forwards_captured_samples_untouched(monkeypatch):
+def test_pipe_forwards_captured_samples(monkeypatch):
     capture = FakeCapture("Carte son")
     monkeypatch.setattr(audio, "open_capture", lambda source: capture)
     pipe = FakePipe()
@@ -224,12 +244,118 @@ def test_pipe_forwards_captured_samples_untouched(monkeypatch):
         deadline = time.time() + 2
         while capture.on_frames is None and time.time() < deadline:
             time.sleep(0.01)
-        payload = float_bytes(0.5, -0.5) * 480
-        capture.on_frames(payload, 480)
+        capture.on_frames(float_bytes(0.5, -0.5) * 480, 480)
         deadline = time.time() + 2
-        while payload not in bytes(pipe.data) and time.time() < deadline:
+        while audio.peak(bytes(pipe.data)) < 0.5 and time.time() < deadline:
             time.sleep(0.01)
-        assert payload in bytes(pipe.data)
+        # Forwarded at once, a frame or two apart at most (the clock steering).
+        loud = [v for v in array("f", bytes(pipe.data)) if v]
+        assert 2 * 470 <= len(loud) <= 2 * 490 and set(loud) == {0.5, -0.5}
         assert feeder.audio_level() == 0.5 and feeder.audio_problem == ""
     finally:
         stop()
+
+
+# ---------------------------------------------------------- steady stream
+
+
+class Card:
+    """A sound card feeding a SteadyStream, on a clock of its own."""
+
+    def __init__(self, drift_ppm=0.0, rate=48000, chunk=960):
+        self.now = 1000.0
+        self.stream = audio.SteadyStream(rate, 1, clock=lambda: self.now)
+        self.rate, self.chunk = rate, chunk
+        self.card_rate = rate * (1 + drift_ppm * 1e-6)
+        self.phase = 0
+        self.owed = 0.0
+        self.out = array("f")
+
+    def run(self, seconds, playing=True, step=0.005):
+        for _ in range(int(seconds / step)):
+            self.now += step
+            if playing:
+                self.owed += step * self.card_rate
+                while self.owed >= self.chunk:
+                    self.owed -= self.chunk
+                    ramp = array("f", [((self.phase + i) % 4800) / 4800 for i in range(self.chunk)])
+                    self.phase += self.chunk
+                    self.stream.push(ramp.tobytes())
+            self.out.frombytes(self.stream.pull())
+
+    def breaks(self):
+        """Places where the ramp does not go on: a click to the ear."""
+        step = 1 / 4800
+        found = 0
+        for i in range(1, len(self.out)):
+            a, b = self.out[i - 1], self.out[i]
+            if a == 0.0 or b == 0.0:
+                continue  # silence, or the ramp starting again from zero
+            delta = b - a
+            if not (0 <= delta <= 2.5 * step) and abs(delta + 1) > 3 * step:
+                found += 1
+        return found
+
+
+def test_stretch_keeps_both_ends_and_the_shape():
+    ramp = array("f", [i / 100 for i in range(100)]).tobytes()
+    for delta in (-2, -1, 1, 3):
+        out = array("f", audio.stretch(ramp, 1, delta))
+        assert len(out) == 100 + delta
+        assert out[0] == 0.0 and abs(out[-1] - 0.99) < 1e-6
+        assert all(out[i + 1] > out[i] for i in range(len(out) - 1))
+    assert audio.stretch(ramp, 1, 0) is ramp
+    stereo = array("f", [v for i in range(50) for v in (i / 50, -i / 50)]).tobytes()
+    out = array("f", audio.stretch(stereo, 2, -1))
+    assert len(out) == 2 * 49 and all(abs(out[i] + out[i + 1]) < 1e-6 for i in range(0, len(out), 2))
+
+
+def test_steady_stream_follows_the_clock_without_a_click():
+    # The bug this guards against: with a sound card slower than the PC's
+    # clock, silence was slipped between real samples as soon as the stream
+    # fell 60 ms behind -- a click every few seconds, for ever.
+    for drift in (-800.0, 0.0, 800.0):
+        card = Card(drift)
+        card.run(120)
+        assert card.breaks() == 0, drift
+        assert card.stream.resyncs == 0 and card.stream.dropped == 0
+        written, due = card.stream.written, 120 * 48000
+        assert abs(written - due) < 0.06 * 48000, (drift, written - due)
+        if drift:
+            # What was added or removed is the drift itself (4608 frames
+            # here), give or take the few tens of ms of settling at the start.
+            assert abs(card.stream.adjusted + drift * 1e-6 * due) < 0.05 * 48000
+
+
+def test_steady_stream_makes_up_silence_only_when_the_source_stops():
+    card = Card()
+    card.run(1.0, playing=False)  # nothing captured yet: silence, a cushion behind
+    assert len(card.out) and not any(card.out)
+    assert 0.9 * 48000 <= card.stream.written <= 0.95 * 48000
+    card.run(2.0)
+    card.run(0.08, playing=False)  # a late callback is not a silence
+    silent = card.stream.written
+    card.run(1.0, playing=False)  # the PC plays nothing: a loopback goes quiet
+    assert card.stream.written - silent > 0.8 * 48000
+    card.run(2.0)
+    assert card.breaks() == 0 and card.stream.resyncs == 0
+    assert abs(card.stream.written - (card.now - 1000.0) * 48000) < 0.07 * 48000
+
+
+def test_steady_stream_jumps_once_after_a_long_hole():
+    card = Card()
+    card.run(2.0)
+    card.now += 3600.0  # the PC slept
+    card.stream.push(array("f", [0.5] * 960).tobytes())
+    data = card.stream.pull()
+    # The hour is skipped, not sent as silence; the stream is on time again.
+    assert len(data) <= 4 * (48000 + 960) and card.stream.resyncs == 1
+    assert abs(card.stream.written - (card.now - 1000.0) * 48000) < 0.07 * 48000
+
+
+def test_steady_stream_keeps_half_a_second_when_nobody_pulls():
+    stream = audio.SteadyStream(48000, 2, clock=lambda: 0.0)
+    for _ in range(100):
+        stream.push(bytes(8 * 960))
+    assert stream.dropped == 100 * 960 - 24000
+    assert len(stream.pull()) <= 8 * 24000

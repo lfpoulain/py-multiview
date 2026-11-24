@@ -38,8 +38,6 @@ log = logging.getLogger(__name__)
 
 LOG_LINES = 300
 AUDIO_PUMP = 0.01  # seconds between audio flushes
-SILENCE_AFTER = 0.12  # seconds without samples before filling the gap
-SILENCE_CUSHION = 0.06  # seconds left unfilled, so real samples are not pushed back
 
 
 class NativeWorker:
@@ -189,14 +187,17 @@ class _AudioOutput:
         if self._format != (frame.rate, frame.channels):
             self.close()
             pa = audio.pyaudio_module()
-            self._pa = pa.PyAudio()
-            self._stream = self._pa.open(
-                format=pa.paFloat32,
-                channels=frame.channels,
-                rate=frame.rate,
-                output=True,
-                frames_per_buffer=max(256, frame.samples),
-            )
+            # PortAudio is not safe to initialise from two threads at once,
+            # and a capture may be opening at this very moment.
+            with audio._PA_LOCK:
+                self._pa = pa.PyAudio()
+                self._stream = self._pa.open(
+                    format=pa.paFloat32,
+                    channels=frame.channels,
+                    rate=frame.rate,
+                    output=True,
+                    frames_per_buffer=max(256, frame.samples),
+                )
             self._format = (frame.rate, frame.channels)
         self._stream.write(frame.data)
 
@@ -210,7 +211,8 @@ class _AudioOutput:
         except Exception:
             pass
         if pa is not None:
-            pa.terminate()
+            with audio._PA_LOCK:
+                pa.terminate()
 
 
 class ScreenSender(NativeWorker):
@@ -243,20 +245,22 @@ class ScreenSender(NativeWorker):
                 self.append(f"Capture {screen.width}x{screen.height} en {x},{y} à {fps} i/s")
                 if screen.clamped:
                     self.append(f"⚠ {screen.clamped}")
-                pump = _AudioPump(sender, audio_source, self.append) if audio_source else None
+                # One origin for both timestamps: sound and picture are dated
+                # on the same clock.
+                origin = time.perf_counter()
+                pump = _AudioPump(sender, audio_source, self.append, origin) if audio_source else None
                 self._pump = pump
                 try:
                     if pump is not None:
                         pump.start()
-                    self._send_frames(sender, screen, fps, pump)
+                    self._send_frames(sender, screen, fps, origin)
                 finally:
                     self._pump = None
                     if pump is not None:
                         pump.close()
 
-    def _send_frames(self, sender, screen: ScreenCapture, fps: int, pump) -> None:
+    def _send_frames(self, sender, screen: ScreenCapture, fps: int, start: float) -> None:
         period = 1.0 / fps
-        start = time.perf_counter()
         index = 0
         misses = 0
         black_since = 0.0
@@ -284,8 +288,6 @@ class ScreenSender(NativeWorker):
             sender.send_video(
                 pixels, screen.width, screen.height, screen.stride, omtlib.CODEC_BGRA, fps, timestamp
             )
-            if pump is not None:
-                pump.note_video(timestamp)
             self.beat()
 
             # Say out loud what is being captured: a black picture on the
@@ -312,87 +314,58 @@ class ScreenSender(NativeWorker):
 class _AudioPump:
     """Captures an audio source and publishes it on the same OMT sender.
 
-    Audio timestamps come from the number of samples already published, not
-    from the wall clock: that is what keeps the stream continuous for the
-    receiver. Silence is inserted only when the source really delivers
-    nothing — a WASAPI loopback goes quiet when the PC plays nothing.
+    Audio timestamps come from the number of samples already published, which
+    keeps the stream continuous for the receiver, and that count is locked to
+    this PC's clock by :class:`audio.SteadyStream`, from the same origin as
+    the picture's timestamps: sound and picture stay together for hours even
+    though the sound card runs on its own crystal.
 
     The source is held by :class:`audio.LiveCapture`: when it cannot be
     captured (device missing, program not started), the picture goes out
     without sound and the capture is retried until it comes.
     """
 
-    def __init__(self, sender: omtlib.Sender, source: str, report) -> None:
+    def __init__(self, sender: omtlib.Sender, source: str, report, origin: float | None = None) -> None:
         self._sender = sender
-        self._chunks: deque[bytes] = deque()
-        self._lock = threading.Lock()
+        self._origin = origin
+        self._stream: audio.SteadyStream | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._sent = 0  # samples per channel already published
         self.live = audio.LiveCapture(source, self._on_frames, report)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True, name="omt-audio")
         self._thread.start()
 
-    def note_video(self, _timestamp: int) -> None:
-        """Hook kept for symmetry; audio runs on its own sample clock."""
-
     def _on_frames(self, data: bytes, _frames: int) -> None:
-        with self._lock:
-            self._chunks.append(data)
-            # Half a second at most: latency beats completeness on a live feed.
-            if len(self._chunks) > int(0.5 / audio.FloatRecorder.CHUNK):
-                self._chunks.popleft()
-
-    def _drain(self) -> bytes:
-        with self._lock:
-            data = b"".join(self._chunks)
-            self._chunks.clear()
-        return data
+        stream = self._stream
+        if stream is not None:
+            stream.push(data)
 
     def _run(self) -> None:
         generation = 0
-        start = silence_from = time.perf_counter()
-        rate = channels = 0
+        stream = None
         while not self._stop.is_set():
             self.live.poll()
-            if self.live.format is None:
-                self._stop.wait(AUDIO_PUMP)
-                continue
-            if self.live.generation != generation:
-                # A capture just (re)opened, maybe in another format: restart
-                # the silence clock from the samples already published.
+            if self.live.format is not None and self.live.generation != generation:
+                # A capture just (re)opened, maybe in another format. The new
+                # stream shares the picture's origin, so it resumes where the
+                # clock is now.
                 generation = self.live.generation
                 rate, channels = self.live.format
-                self._drain_stale(rate, channels)
-                start = time.perf_counter() - self._sent / rate
-                silence_from = time.perf_counter()
-            data = self._drain()
-            if data:
-                self._publish(data, rate, channels)
-                silence_from = time.perf_counter()
-            elif time.perf_counter() - silence_from > SILENCE_AFTER:
-                due = int((time.perf_counter() - start) * rate)
-                gap = due - self._sent - int(rate * SILENCE_CUSHION)
-                if gap > 0:
-                    self._publish(b"\x00" * (gap * 4 * channels), rate, channels)
+                if stream is None or (stream.rate, stream.channels) != (rate, channels):
+                    stream = self._stream = audio.SteadyStream(rate, channels, origin=self._origin)
+            if stream is not None:
+                data = stream.pull()
+                if data:
+                    self._publish(stream, data)
             self._stop.wait(AUDIO_PUMP)
 
-    def _drain_stale(self, rate: int, channels: int) -> None:
-        """Samples counted at another rate mean nothing any more."""
-        if getattr(self, "_rate", rate) != rate:
-            self._sent = 0
-        self._rate = rate
-
-    def _publish(self, interleaved: bytes, rate: int, channels: int) -> None:
-        samples = len(interleaved) // (4 * channels)
-        if not samples:
-            return
-        timestamp = int(self._sent * omtlib.TICKS_PER_SECOND / rate)
-        planar = omtlib.interleaved_to_planar(interleaved, channels)
-        self._sender.send_audio(planar, rate, channels, timestamp)
-        self._sent += samples
+    def _publish(self, stream: audio.SteadyStream, interleaved: bytes) -> None:
+        samples = len(interleaved) // stream.frame_bytes
+        timestamp = int((stream.written - samples) * omtlib.TICKS_PER_SECOND / stream.rate)
+        planar = omtlib.interleaved_to_planar(interleaved, stream.channels)
+        self._sender.send_audio(planar, stream.rate, stream.channels, timestamp)
 
     def close(self) -> None:
         self._stop.set()

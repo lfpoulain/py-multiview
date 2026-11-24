@@ -281,8 +281,8 @@ class FloatRecorder:
     sender reads on its pipe, so nothing is converted on the way. The
     callback runs on PortAudio's thread and must stay short.
 
-    A WASAPI loopback endpoint delivers nothing while the PC is silent; the
-    consumers fill those gaps themselves.
+    A WASAPI loopback endpoint delivers nothing while the PC is silent;
+    :class:`SteadyStream` fills those gaps.
     """
 
     CHUNK = 0.02  # seconds per callback
@@ -501,6 +501,164 @@ class LiveCapture:
         self._drop()
 
 
+def stretch(data: bytes, channels: int, delta: int) -> bytes:
+    """Interleaved float32 resampled to ``delta`` frames more (or fewer).
+
+    Linear interpolation over the whole chunk: its first and last frames are
+    kept as they are, so the chunk still joins its neighbours without a step.
+    Meant for a frame or two at a time, which is inaudible.
+    """
+    samples = array("f")
+    samples.frombytes(data[: len(data) - len(data) % 4])
+    count = len(samples) // channels
+    wanted = count + delta
+    if not delta or count < 2 or wanted < 2:
+        return data
+    step = (count - 1) / (wanted - 1)
+    out = array("f", bytes(4 * wanted * channels))
+    for c in range(channels):
+        plane = samples[c::channels]
+        plane.append(plane[-1])
+        resampled = array("f", bytes(4 * wanted))
+        for j in range(wanted):
+            position = j * step
+            i = int(position)
+            left = plane[i]
+            resampled[j] = left + (plane[i + 1] - left) * (position - i)
+        out[c::channels] = resampled
+    return out.tobytes()
+
+
+class SteadyStream:
+    """Captured chunks in, a continuous stream locked to this PC's clock out.
+
+    A sound card counts its samples on its own crystal, the picture is paced
+    by the system clock, and the two never agree: a card that is 100 ppm off
+    gains or loses 6 ms a minute. Left alone, that difference ends up as
+    silence slipped between real samples (a click each time), or as sound
+    piling up behind the picture. So the stream is steered instead: the
+    number of samples handed over is compared with the time elapsed, and a
+    frame is added to or removed from a chunk now and then, by interpolation.
+
+    Three rules:
+
+    * what is captured is forwarded at once, never paced, never held back;
+    * silence is made up only when the source has really stopped delivering
+      (a WASAPI loopback goes quiet when the PC plays nothing), and stays a
+      cushion behind the clock so that the sound coming back is not pushed
+      late;
+    * a jump is made only when the stream is off by more than ``RESYNC``
+      (the PC was suspended, the consumer blocked): one cut, then steady.
+
+    ``push`` is called from the capture thread, ``pull`` from the consumer's
+    loop every few milliseconds.
+    """
+
+    CUSHION = 0.06  # seconds the made-up silence stays behind the clock
+    SILENCE_AFTER = 0.12  # seconds without samples before making up silence
+    TARGET = 0.03  # seconds the stream trails the clock while sound flows
+    MAX_BUFFER = 0.5  # seconds kept when the consumer does not pull
+    SMOOTHING = 2.5  # seconds: capture callbacks jitter, the drift does not
+    GAIN = 0.1  # correction per second of error
+    MAX_CORRECTION = 0.005  # 0.5 %: far below what an ear can tell
+    RESYNC = 0.25  # seconds of error beyond which the stream jumps
+
+    def __init__(self, rate: int, channels: int, origin: float | None = None, clock=time.perf_counter) -> None:
+        self.rate = int(rate)
+        self.channels = int(channels)
+        self.frame_bytes = 4 * self.channels
+        self.written = 0  # frames handed over since the origin, silence included
+        self.adjusted = 0  # frames added (+) or removed (-) to follow the clock
+        self.resyncs = 0
+        self.dropped = 0  # frames lost because nobody pulled
+        self._clock = clock
+        self._origin = origin
+        self._started = False
+        self._chunks: deque[bytes] = deque()
+        self._buffered = 0
+        self._lock = threading.Lock()
+        self._last_data: float | None = None
+        self._error = 0.0  # smoothed, in seconds; positive when ahead of the clock
+        self._error_at: float | None = None
+        self._debt = 0.0  # fraction of a frame still to add or remove
+
+    def push(self, data: bytes) -> None:
+        limit = int(self.rate * self.MAX_BUFFER) * self.frame_bytes
+        with self._lock:
+            self._chunks.append(data)
+            self._buffered += len(data)
+            # Latency beats completeness on a live feed.
+            while self._buffered > limit and len(self._chunks) > 1:
+                lost = self._chunks.popleft()
+                self._buffered -= len(lost)
+                self.dropped += len(lost) // self.frame_bytes
+
+    def pull(self) -> bytes:
+        """What to send now: captured sound, silence, or nothing."""
+        now = self._clock()
+        if self._origin is None:
+            self._origin = now
+        with self._lock:
+            data = b"".join(self._chunks)
+            self._chunks.clear()
+            self._buffered = 0
+        data = data[: len(data) - len(data) % self.frame_bytes]
+        due = (now - self._origin) * self.rate
+        if not self._started:
+            # The stream begins now, wherever the clock already is.
+            self._started = True
+            self.written = max(self.written, int(due - self.CUSHION * self.rate))
+        if not data:
+            if self._last_data is not None and now - self._last_data <= self.SILENCE_AFTER:
+                return b""
+            gap = int(due - self.CUSHION * self.rate) - self.written
+            if gap <= 0:
+                return b""
+            self.written += gap
+            self._error_at = None  # the sound that comes back starts a new measure
+            # After a long hole (PC suspended, consumer blocked) the time is
+            # skipped rather than filled.
+            return bytes(min(gap, self.rate) * self.frame_bytes)
+
+        self._last_data = now
+        frames = len(data) // self.frame_bytes
+        error = (self.written + frames - due) / self.rate + self.TARGET
+        head = b""
+        if error > self.RESYNC:  # far too much sound for the time elapsed: cut
+            cut = min(frames, int(error * self.rate))
+            data = data[cut * self.frame_bytes:]
+            frames -= cut
+            error -= cut / self.rate
+            self.resyncs += 1
+            self._error_at = None
+        elif error < -self.RESYNC:  # far behind: jump forward over a silence
+            pad = int(-error * self.rate)
+            head = bytes(min(pad, self.rate) * self.frame_bytes)
+            self.written += pad
+            error += pad / self.rate
+            self.resyncs += 1
+            self._error_at = None
+
+        if self._error_at is None:
+            self._error = error
+        else:
+            elapsed = max(0.0, now - self._error_at)
+            self._error += (error - self._error) * elapsed / (self.SMOOTHING + elapsed)
+        self._error_at = now
+
+        correction = max(-self.MAX_CORRECTION, min(self.MAX_CORRECTION, -self.GAIN * self._error))
+        self._debt += frames * correction
+        delta = int(self._debt)
+        if delta and frames >= 2:
+            delta = max(-(frames // 2), min(frames, delta))
+            data = stretch(data, self.channels, delta)
+            self._debt -= delta
+            self.adjusted += delta
+            frames += delta
+        self.written += frames
+        return head + data
+
+
 class PipeFeeder:
     """Feeds the FFmpeg sender's stdin with a source's sound, as raw float32.
 
@@ -511,15 +669,12 @@ class PipeFeeder:
     beside it (:class:`LiveCapture`). Whatever happens to the sound, FFmpeg
     always has something to read.
 
-    Captured samples are forwarded as soon as they arrive: the wall clock
-    only decides *when to invent silence*, never how much real audio to hand
-    over. Pacing the pipe on the wall clock instead would make every late
-    callback inject silence, pile up the samples that arrive just after, and
-    end up discarding them at the buffer cap — a click each time.
+    The sound itself goes through a :class:`SteadyStream`: forwarded as soon
+    as it is captured, locked to this PC's clock so that it neither drifts
+    away from the picture nor gets silence slipped between its samples.
     """
 
     CHUNK = 0.01  # seconds
-    CUSHION = 0.06  # seconds of play-out kept in hand before padding a gap
 
     def __init__(self, source: str, rate: int = 48000, channels: int = 2) -> None:
         self.source = source
@@ -545,12 +700,9 @@ class PipeFeeder:
 class _PipeFeed:
     def __init__(self, feeder: PipeFeeder, pipe, report) -> None:
         self.rate, self.channels = feeder.rate, feeder.channels
-        self.frame_bytes = 4 * self.channels  # f32le on the pipe
         self._pipe = pipe
-        self._buffer: deque[bytes] = deque()
-        self._buffered = 0
-        self._lock = threading.Lock()
         self._stop = threading.Event()
+        self.stream = SteadyStream(self.rate, self.channels)  # f32le on the pipe
         self.live = LiveCapture(feeder.source, self._on_frames, report, expected=(self.rate, self.channels))
         self._thread = threading.Thread(target=self._run, daemon=True, name="audio-feed")
 
@@ -561,45 +713,23 @@ class _PipeFeed:
         self._stop.set()
 
     def _on_frames(self, data: bytes, _frames: int) -> None:
-        with self._lock:
-            self._buffer.append(data)
-            self._buffered += len(data)
-            # Never keep more than ~0.5 s: latency beats completeness.
-            limit = self.rate * self.frame_bytes // 2
-            while self._buffered > limit and self._buffer:
-                self._buffered -= len(self._buffer.popleft())
-
-    def _drain(self) -> bytes:
-        with self._lock:
-            out = b"".join(self._buffer)
-            self._buffer.clear()
-            self._buffered = 0
-        return out
+        self.stream.push(data)
 
     def _run(self) -> None:
-        pipe = self._pipe
-        cushion = int(self.rate * PipeFeeder.CUSHION)
+        pipe, stream = self._pipe, self.stream
         try:
             # Something to read at once: FFmpeg starts the picture as soon as
             # its audio input has shown a first packet.
-            written = int(self.rate * PipeFeeder.CHUNK * 2)
-            pipe.write(b"\x00" * (written * self.frame_bytes))
+            first = int(self.rate * PipeFeeder.CHUNK * 2)
+            pipe.write(bytes(first * stream.frame_bytes))
             pipe.flush()
-            start = time.perf_counter()
+            stream.written = first
             while not self._stop.is_set():
                 self.live.poll()  # may take a moment when it (re)opens a device
-                data = self._drain()
+                data = stream.pull()
                 if data:
                     pipe.write(data)
                     pipe.flush()
-                    written += len(data) // self.frame_bytes
-                else:
-                    due = int((time.perf_counter() - start) * self.rate)
-                    gap = due - written - cushion
-                    if gap > 0:
-                        pipe.write(b"\x00" * (gap * self.frame_bytes))
-                        pipe.flush()
-                        written += gap
                 time.sleep(PipeFeeder.CHUNK / 2)
         except (BrokenPipeError, OSError, ValueError):
             pass  # ffmpeg exited

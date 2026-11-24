@@ -22,6 +22,8 @@ ROTATIONS = (0, 90, 180, 270)
 DECODERS = ("cpu", "nvidia", "intel", "amd")
 OMT_PIXEL_FORMATS = ("uyvy422", "bgra", "yuv422p10le")
 
+CLOCK_REVISION = 1  # see normalize_sender
+
 DEFAULT_LATENCY_MS = 120
 DEFAULT_SENDER_NAME = "py-multiview"
 DEFAULT_MULTICAST_ADDR = "239.10.10.10"
@@ -122,7 +124,14 @@ def normalize_sender(raw: dict, reset_display: bool) -> dict:
     sender["fps"] = _int(sender.get("fps"), 30, 1, 60)
     pixel_format = _str(sender.get("pixelFormat"), "uyvy422").lower()
     sender["pixelFormat"] = pixel_format if pixel_format in OMT_PIXEL_FORMATS else "uyvy422"
-    sender["clockOutput"] = bool(sender.get("clockOutput", False))
+    # On by default since revision 1: without it FFmpeg releases sound and
+    # picture in bursts. Configurations written before that carried False
+    # without anyone having chosen it (the box was greyed out), so they are
+    # switched on once; unticking it afterwards is remembered.
+    if _int(sender.get("clockRevision"), 0) < CLOCK_REVISION:
+        sender["clockOutput"] = True
+    sender["clockRevision"] = CLOCK_REVISION
+    sender["clockOutput"] = bool(sender.get("clockOutput", True))
     # FFmpeg/gdigrab by default: the libomt sender gives a black picture on
     # some machines. True switches the emission back to libomt.
     sender["native"] = bool(sender.get("native", False))

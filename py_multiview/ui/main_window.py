@@ -63,6 +63,11 @@ log = logging.getLogger(__name__)
 SIDEBAR_WIDTH = 350
 UPDATE_FIRST_CHECK_MS = 5_000
 UPDATE_CHECK_EVERY_MS = 6 * 3600 * 1000
+CLOCK_TOOLTIP = (
+    "libomt remet les trames au récepteur à leur cadence : une trame de son toutes les 20 ms.\n"
+    "Décoché, son et image partent par paquets, comme FFmpeg les lit, et un récepteur\n"
+    "qui garde peu de son en réserve accroche. À laisser coché."
+)
 PIXEL_FORMAT_LABELS = {
     "uyvy422": ("UYVY 4:2:2", "Recommandé : bon compromis qualité / bande passante"),
     "bgra": ("BGRA 4:4:4", "Pleine résolution couleur avec alpha, plus gourmand"),
@@ -310,7 +315,7 @@ class MainWindow(QMainWindow):
         self.sender_meter = LevelMeter()
         self.sender_meter.hide()
         self.sender_clock = QCheckBox("Horloge de sortie (clock_output)")
-        self.sender_clock.setToolTip("Cadence la sortie OMT sur l'horloge libomt plutôt que sur la capture")
+        self.sender_clock.setToolTip(CLOCK_TOOLTIP)
         for row_label, widget in (("Écran", self.sender_display), ("Nom", self.sender_name)):
             line = QHBoxLayout()
             line.addWidget(field_label(row_label, 52))
@@ -785,13 +790,14 @@ class MainWindow(QMainWindow):
 
     def load_sender_fields(self) -> None:
         sender = self.config["sender"]
-        if omtlib.available():
-            # libomt captures in BGRA and encodes itself; these two only drive
-            # the FFmpeg fallback.
-            note = "Réglage propre à l'émission FFmpeg : libomt encode lui-même l'image."
-            for widget in (self.sender_format, self.sender_clock):
-                widget.setEnabled(False)
-                widget.setToolTip(note)
+        # libomt captures in BGRA, encodes and paces itself: these two only
+        # drive the FFmpeg emission. What counts is the path actually used
+        # (Préférences → Émission OMT), not whether the library is there.
+        native = omtlib.available() and sender.get("native", False)
+        note = "Réglage propre à l'émission FFmpeg : libomt encode et cadence lui-même."
+        for widget, tip in ((self.sender_format, ""), (self.sender_clock, CLOCK_TOOLTIP)):
+            widget.setEnabled(not native)
+            widget.setToolTip(note if native else tip)
         widgets = (self.sender_name, self.sender_fps, self.sender_format, self.sender_clock)
         for w in widgets:
             w.blockSignals(True)
@@ -1119,6 +1125,7 @@ class MainWindow(QMainWindow):
     def on_preferences_changed(self) -> None:
         self.refresh_displays(force=True)
         self.refresh_api()
+        self.load_sender_fields()  # the emission path decides which fields apply
         self.commit()
 
     def reset_configuration(self) -> bool:

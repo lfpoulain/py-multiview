@@ -358,6 +358,9 @@ def dshow_audio_input_args(device: str) -> list[str]:
     return ["-f", "dshow", "-audio_buffer_size", "50", "-i", f"audio={device}"]
 
 
+AUDIO_FRAME = 960  # samples per audio frame sent: 20 ms at the 48 kHz OMT carries
+
+
 def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input: list[str] | None = None) -> list[str]:
     if audio_input:
         audio = [
@@ -368,7 +371,11 @@ def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input:
             # resampler stretches smoothly and only cuts/pads past 100 ms of
             # real drift. A higher "async" would re-time on every jitter spike
             # and audibly warble the sound.
-            "-af", "aresample=async=1:min_hard_comp=0.100:first_pts=0",
+            #
+            # Then 20 ms frames: FFmpeg reads raw PCM 4096 samples at a time,
+            # and the receiver would get its sound in 85 ms blocks, too coarse
+            # for the few tens of milliseconds a mixer keeps in hand.
+            "-af", f"aresample=async=1:min_hard_comp=0.100:first_pts=0,asetnsamples=n={AUDIO_FRAME}:p=0",
             "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2",
             # Never hold an audio packet back waiting for the matching video
             # frame: gdigrab stalls would otherwise release the sound in bursts.
@@ -392,7 +399,10 @@ def build_sender_command(ffmpeg: Path, display: dict, sender: dict, audio_input:
         "-c:v", "wrapped_avframe",
         # Constant cadence: gdigrab jitter otherwise yields duplicate timestamps.
         "-fps_mode", "cfr",
-        "-clock_output", "1" if sender.get("clockOutput") else "0",
+        # With the clock, libomt hands the frames over at their own rate: one
+        # audio frame every 20 ms. Without it they leave as FFmpeg reads them,
+        # in bursts a tenth of a second apart, picture included.
+        "-clock_output", "1" if sender.get("clockOutput", True) else "0",
         "-reference_level", f"{float(sender.get('referenceLevel', 1.0)):.3f}",
         "-f", "libomt", str(sender["name"]),
     ]
