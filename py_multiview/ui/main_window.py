@@ -5,14 +5,16 @@ from __future__ import annotations
 import logging
 import threading
 
-from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -149,14 +151,15 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(16, 16, 16, 12)
-        outer.setSpacing(14)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
         outer.addWidget(self._build_header())
 
         body = QHBoxLayout()
+        body.setContentsMargins(14, 14, 14, 14)
         body.setSpacing(14)
-        body.addWidget(self._build_sidebar())
         body.addWidget(self._build_streams_panel(), 1)
+        body.addWidget(self._build_sidebar())
         outer.addLayout(body, 1)
 
         self.engine_label = button(variant="ghost")
@@ -187,7 +190,7 @@ class MainWindow(QMainWindow):
 
         titles = QVBoxLayout()
         titles.setSpacing(0)
-        titles.addWidget(label(APP_NAME, "AppTitle"))
+        titles.addWidget(label('py-<span style="color:#2dd4bf">multiview</span>', "AppTitle"))
         ip = self.host_ip or "IP inconnue"
         self.subtitle = label(f"Version {__version__}  ·  Ce poste : {ip}", "Muted")
         self.subtitle.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -223,6 +226,10 @@ class MainWindow(QMainWindow):
         panel.setFixedWidth(SIDEBAR_WIDTH)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 6, 0, 6)
+        inspector_title = label("Contrôle du poste", "PanelTitle")
+        inspector_title.setContentsMargins(16, 8, 16, 8)
+        panel_layout.addWidget(inspector_title)
+        panel_layout.addWidget(divider())
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -450,6 +457,22 @@ class MainWindow(QMainWindow):
         self.streams_count = label("", "Muted")
         head.addWidget(self.streams_count)
         head.addStretch(1)
+        modes = QFrame()
+        modes.setObjectName("Segment")
+        choices = QHBoxLayout(modes)
+        choices.setContentsMargins(3, 3, 3, 3)
+        choices.setSpacing(1)
+        self.view_group = QButtonGroup(self)
+        self.editing = self.config.get("streamView") == "edit"
+        for editing, title, tip in ((False, "Direct", "Surveiller les flux et leurs sorties"),
+                                    (True, "Édition", "Configurer les sources et les écrans")):
+            btn = button(title, variant="segment", tooltip=tip)
+            btn.setCheckable(True)
+            self.view_group.addButton(btn, int(editing))
+            btn.setChecked(editing == self.editing)
+            choices.addWidget(btn)
+        self.view_group.idClicked.connect(lambda index: self._set_editing(bool(index)))
+        head.addWidget(modes)
         add = button("Ajouter un flux", variant="primary", icon="plus", icon_color="#ffffff", tooltip="Ctrl+N")
         add.clicked.connect(self.add_stream)
         head.addWidget(add)
@@ -462,10 +485,13 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
         inner.setObjectName("Transparent")
-        self.cards_layout = QVBoxLayout(inner)
+        self.cards_layout = QGridLayout(inner)
         self.cards_layout.setContentsMargins(0, 0, 6, 0)
-        self.cards_layout.setSpacing(10)
-        self.cards_layout.addStretch(1)
+        self.cards_layout.setSpacing(12)
+        self.cards_layout.setAlignment(Qt.AlignTop)
+        self._columns = 0
+        self.cards_scroll = scroll
+        scroll.viewport().installEventFilter(self)
         scroll.setWidget(inner)
         self.streams_stack.addWidget(scroll)
 
@@ -631,13 +657,44 @@ class MainWindow(QMainWindow):
         card.discover_requested.connect(self.discover_omt)
         card.status_message.connect(self.notify)
         card.preview_requested.connect(self.open_preview)
-        self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+        card.edit_requested.connect(self.edit_stream)
+        card.set_editing(self.editing)
         self.cards[stream["id"]] = card
         return card
 
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Resize and obj is self.cards_scroll.viewport():
+            self._layout_cards()
+        return super().eventFilter(obj, event)
+
+    def _layout_cards(self, force: bool = False) -> None:
+        width = self.cards_scroll.viewport().width()
+        columns = 1 if self.editing else max(1, min(4, width // 305, len(self.cards)))
+        if columns == self._columns and not force:
+            return
+        for i in range(max(columns, self._columns)):
+            self.cards_layout.setColumnStretch(i, int(i < columns))
+        self._columns = columns
+        for index, card in enumerate(self.cards.values()):
+            self.cards_layout.removeWidget(card)
+            self.cards_layout.addWidget(card, index // columns, index % columns)
+
+    def _set_editing(self, editing: bool) -> None:
+        if self.editing == editing:
+            return
+        self.editing = editing
+        self.view_group.button(int(editing)).setChecked(True)
+        for card in self.cards.values():
+            card.set_editing(editing)
+        self._layout_cards(force=True)
+        self.config["streamView"] = "edit" if editing else "live"
+        if not save_config(self.config):
+            self.notify("Impossible d’enregistrer la vue choisie.")
+
     def _update_stream_count(self) -> None:
         count = len(self.config["streams"])
-        self.streams_count.setText(f"{count} flux" if count else "")
+        self.streams_count.setText(str(count))
+        self._layout_cards(force=True)
         self.streams_stack.setCurrentIndex(0 if count else 1)
 
     def _free_port(self) -> int:
@@ -653,8 +710,14 @@ class MainWindow(QMainWindow):
         card = self._add_card(stream)
         self._update_stream_count()
         self.commit()
+        self.edit_stream(card.stream_id)
+
+    def edit_stream(self, stream_id: str) -> None:
+        self._set_editing(True)
+        card = self.cards[stream_id]
         card.name_edit.setFocus()
         card.name_edit.selectAll()
+        self.cards_scroll.ensureWidgetVisible(card.name_edit)
 
     def delete_stream(self, stream_id: str) -> None:
         stream = self._stream(stream_id)
@@ -755,11 +818,11 @@ class MainWindow(QMainWindow):
         return next((d for d in self.displays if d["id"] == display_id), None)
 
     def refresh_previews(self) -> None:
-        size = QSize(160, 90)
         for stream_id, card in self.cards.items():
             display = self._stream_display(stream_id)
             live = self.engine.stream_info(stream_id).status == Status.ACTIVE
-            card.thumb.set_preview(grab_display(display, size) if live and display else None)
+            if card.thumb.isVisible():
+                card.thumb.set_preview(grab_display(display, card.thumb.size()) if live and display else None)
 
     def open_preview(self, stream_id: str) -> None:
         stream = self._stream(stream_id)
@@ -1001,8 +1064,8 @@ class MainWindow(QMainWindow):
             set_button(self.reception_btn, "Démarrer la réception", "success", "play")
 
         sender = self.engine.sender_info()
-        self.sender_chip.setText("OMT  en émission" if sender.status == Status.ACTIVE else "OMT  arrêté")
-        set_state(self.sender_chip, "active" if sender.status == Status.ACTIVE else "stopped")
+        self.sender_chip.setText(f"OMT  ·  {STATUS_TEXT[sender.status]}")
+        set_state(self.sender_chip, sender.status.value)
         set_state(self.sender_detail, sender.status.value)
         self.sender_detail.setText(sender.detail)
         self.sender_detail.setVisible(bool(sender.detail))
@@ -1141,6 +1204,7 @@ class MainWindow(QMainWindow):
             return False
         self.engine.shutdown()
         self.config = default_config()
+        self._set_editing(False)
         self.refresh_displays(force=True)
         self.reload_cards()
         self.load_sender_fields()

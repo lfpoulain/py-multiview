@@ -67,6 +67,34 @@ def test_summary_is_cut_instead_of_widening_the_column(qapp):
     assert label.text() == "court" and label.toolTip() == ""
 
 
+def test_switching_stream_views_preserves_settings_and_live_controls(qapp):
+    from py_multiview.config import default_stream
+    from py_multiview.ui.stream_card import StreamCard
+
+    stream = default_stream(1, 9102)
+    card = StreamCard(stream)
+    card.set_host_ip("192.0.2.24")
+    card.show()
+    changes, edits = [], []
+    card.changed.connect(changes.append)
+    card.edit_requested.connect(edits.append)
+    assert card.thumb.isVisible() and not card.delete_btn.isVisible()
+    assert "srt://192.0.2.24:9102" in card.source_summary.full_text()
+    card.edit_btn.click()
+    assert edits == [stream["id"]]
+    card.set_editing(True)
+    assert card.editor.isVisible() and card.name_edit.isVisible() and not card.thumb.isVisible()
+    assert not changes
+    card.source_combo.setCurrentIndex(card.source_combo.findData("omt"))
+    card.set_omt_source("REGIE (Master)")
+    changes.clear()
+    card.set_editing(False)
+    assert "REGIE (Master)" in card.source_summary.full_text()
+    assert card.toggle_btn.isVisible() and card.logs_btn.isVisible()
+    assert not changes
+    card.close()
+
+
 def test_output_clock_is_greyed_only_when_libomt_really_emits(qapp, monkeypatch):
     # The bug this guards against: the box was greyed as soon as libomt could
     # be loaded, although FFmpeg -- the default path, the one it drives -- was

@@ -90,11 +90,11 @@ Windows 10/11 64 bits, FFmpeg inclus, rien d'autre à installer. Ces liens donne
 ## Démarrage rapide
 
 1. **Ajouter un flux**, ou **Auto-assigner** pour en créer un par écran.
-2. Sur la carte, choisir l'**écran** de sortie.
+2. Dans **Édition**, choisir l’**écran** de sortie sur la carte du flux.
 3. **Démarrer la réception**.
 4. Dans OBS, vMix ou l'encodeur, envoyer en SRT *caller* vers l'adresse de la carte, par exemple `srt://192.168.1.20:9001`.
 
-Le flux passe *en direct* dès que l'image arrive. Le [guide d'utilisation](docs/guide.md) détaille l'OMT, le routage multicast, l'émission, le retour audio, le réseau et le dépannage.
+Ouvrir **Direct** pour surveiller les aperçus en mosaïque. Un flux passe *en direct* dès que l’image arrive. Le [guide d'utilisation](docs/guide.md) détaille l'OMT, le routage multicast, l'émission, le retour audio, le réseau et le dépannage.
 
 ## Documentation
 

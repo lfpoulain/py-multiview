@@ -61,7 +61,7 @@ def button(
     elif small:
         btn.setProperty("size", "small")
     if icon:
-        btn.setIcon(theme.icon(icon, icon_color))
+        btn.setIcon(theme.icon(icon, "#04211d" if variant == "primary" else icon_color))
         btn.setIconSize(QSize(16, 16))
     if tooltip:
         btn.setToolTip(tooltip)
@@ -192,6 +192,14 @@ class _SectionHead(QFrame):
         super().__init__()
         self.setObjectName("SectionHead")
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
@@ -221,6 +229,7 @@ class CollapsibleSection(QWidget):
         # Two rows: title and action on top, then the summary on the full width
         # (beside the button it would be cut after a few words).
         self.head = _SectionHead()
+        self.head.setAccessibleName(title)
         stack = QVBoxLayout(self.head)
         stack.setContentsMargins(0, 6, 0, 6)
         stack.setSpacing(3)

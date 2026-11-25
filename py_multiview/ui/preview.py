@@ -7,8 +7,8 @@ black bars included) and costs no second decode of the stream.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QPixmap, QScreen
-from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPixmap, QScreen
+from PySide6.QtWidgets import QDialog, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from . import theme
 
@@ -38,14 +38,17 @@ def grab_display(display: dict, size: QSize) -> QPixmap | None:
 
 
 class Thumbnail(QLabel):
-    """Fixed-size preview; shows a placeholder when the stream is not on air."""
+    """Monitor tile. An off-air slate distinguishes idle outputs from live black."""
 
     clicked = Signal()
 
-    def __init__(self, width: int = 160, height: int = 90, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Thumbnail")
-        self.setFixedSize(width, height)
+        self.setFixedHeight(152)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setAccessibleName("Agrandir l’aperçu de sortie")
         self.setAlignment(Qt.AlignCenter)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Aperçu de l'écran de sortie — clic pour agrandir")
@@ -63,11 +66,39 @@ class Thumbnail(QLabel):
     def clear_preview(self) -> None:
         if self._live:
             self._live = False
-            self.setPixmap(theme.pixmap("screen", theme.TEXT_MUTED, 28, stroke=1.5))
+            self.clear()
             self.setToolTip("Aperçu disponible quand le flux est en direct")
 
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self._live:
+            return
+        painter = QPainter(self)
+        area = self.rect().adjusted(1, 1, -1, -1)
+        painter.setClipRect(area)
+        painter.setPen(QColor("#18242a"))
+        for x in range(area.center().x() % 24, area.width(), 24):
+            painter.drawLine(x, 1, x, area.bottom())
+        for y in range(area.center().y() % 24, area.height(), 24):
+            painter.drawLine(1, y, area.right(), y)
+        center = area.center()
+        icon = theme.icon("screen", theme.TEXT_MUTED)
+        icon.paint(painter, center.x() - 14, center.y() - 23, 28, 28)
+        painter.setPen(QColor(theme.TEXT_DIM))
+        painter.drawText(area.adjusted(0, 45, 0, 0), Qt.AlignCenter, "Aperçu hors ligne")
+        painter.end()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.clicked.emit()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
     def mousePressEvent(self, event) -> None:
-        self.clicked.emit()
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class PreviewDialog(QDialog):

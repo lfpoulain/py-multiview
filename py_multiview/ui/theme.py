@@ -11,18 +11,18 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
-BG = "#0e1016"
-SURFACE = "#161922"
-SURFACE_2 = "#1c202b"
-FIELD = "#11141b"
-BORDER = "#272c3a"
-BORDER_HOVER = "#394054"
-TEXT = "#e7e9f0"
-TEXT_DIM = "#a1a9ba"
-TEXT_MUTED = "#6b7386"
-ACCENT = "#7c6cff"
-ACCENT_HOVER = "#8e80ff"
-ACCENT_PRESSED = "#6a59f2"
+BG = "#0d0f13"
+SURFACE = "#14171d"
+SURFACE_2 = "#1a1e26"
+FIELD = "#101319"
+BORDER = "#2b303b"
+BORDER_HOVER = "#465362"
+TEXT = "#e7eaf0"
+TEXT_DIM = "#acb7c6"
+TEXT_MUTED = "#8b93a5"
+ACCENT = "#2dd4bf"
+ACCENT_HOVER = "#5eead4"
+ACCENT_PRESSED = "#14b8a6"
 SUCCESS = "#34d399"
 WARNING = "#fbbf24"
 DANGER = "#f87171"
@@ -111,16 +111,16 @@ QToolTip {{
     border-radius: 6px; padding: 6px 8px;
 }}
 
-QFrame#Header {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 14px; }}
+QFrame#Header {{ background: {SURFACE}; border-bottom: 1px solid {BORDER}; }}
 QFrame#Panel {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 14px; }}
 QFrame#Divider {{ background: {BORDER}; max-height: 1px; min-height: 1px; border: none; }}
 QWidget#Transparent, QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}
 
-QLabel#AppTitle {{ font-size: 17px; font-weight: 600; }}
+QLabel#AppTitle {{ font-size: 19px; font-weight: 700; }}
 QLabel#Muted {{ color: {TEXT_MUTED}; }}
 QLabel#Dim {{ color: {TEXT_DIM}; }}
 QLabel#SectionTitle {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 700; letter-spacing: 1px; }}
-QLabel#PanelTitle {{ font-size: 15px; font-weight: 600; }}
+QLabel#PanelTitle {{ font-size: 18px; font-weight: 600; }}
 QLabel#FieldLabel {{ color: {TEXT_MUTED}; }}
 QLabel#Mono {{ font-family: "Cascadia Mono", "Consolas", monospace; color: {TEXT_DIM}; }}
 QLabel#Detail {{ color: {TEXT_DIM}; }}
@@ -130,7 +130,7 @@ QLabel#EmptyTitle {{ font-size: 15px; font-weight: 600; }}
 
 QLabel#Pill {{
     border-radius: 10px; padding: 2px 10px; font-size: 11px; font-weight: 600;
-    background: #232837; color: {TEXT_MUTED};
+    background: #242933; color: {TEXT_MUTED};
 }}
 QLabel#Pill[state="active"] {{ background: #12342a; color: {SUCCESS}; }}
 QLabel#Pill[state="waiting"], QLabel#Pill[state="retrying"] {{ background: #3a2f12; color: {WARNING}; }}
@@ -143,7 +143,16 @@ QLabel#Chip {{
 }}
 QLabel#Chip[state="active"] {{ color: {SUCCESS}; border-color: #1f5b47; }}
 
-QLabel#Thumbnail {{ background: #07080c; border: 1px solid {BORDER}; border-radius: 8px; }}
+QLabel#StreamTitle {{ font-size: 16px; font-weight: 650; }}
+QFrame#Segment {{ background: {FIELD}; border: 1px solid {BORDER}; border-radius: 8px; }}
+QPushButton[variant="segment"] {{ background: transparent; border: 1px solid transparent; color: {TEXT_DIM};
+    padding: 3px 12px; border-radius: 5px; }}
+QPushButton[variant="segment"]:checked {{ background: #253936; color: {ACCENT_HOVER}; font-weight: 650; }}
+QLabel#Chip[state="error"] {{ color: {DANGER}; border-color: #703338; }}
+QLabel#Chip[state="waiting"], QLabel#Chip[state="retrying"] {{ color: {WARNING}; border-color: #73562b; }}
+QLabel#Chip[state="starting"] {{ color: {INFO}; }}
+QLabel#Thumbnail:focus {{ border-color: {ACCENT}; }}
+QLabel#Thumbnail {{ background: #0a1013; border: 1px solid {BORDER}; border-radius: 8px; }}
 QFrame#StreamCard {{
     background: {SURFACE_2}; border: 1px solid {BORDER}; border-radius: 12px;
 }}
@@ -159,11 +168,11 @@ QPushButton {{
 QPushButton:hover {{ border-color: {BORDER_HOVER}; background: #222736; }}
 QPushButton:pressed {{ background: #1a1e29; }}
 QPushButton:disabled {{ color: {TEXT_MUTED}; background: {SURFACE}; }}
-QPushButton[variant="primary"] {{ background: {ACCENT}; border-color: {ACCENT}; color: white; font-weight: 600; }}
+QPushButton[variant="primary"] {{ background: {ACCENT}; border-color: {ACCENT}; color: #04211d; font-weight: 600; }}
 QPushButton[variant="primary"]:hover {{ background: {ACCENT_HOVER}; border-color: {ACCENT_HOVER}; }}
 QPushButton[variant="primary"]:pressed {{ background: {ACCENT_PRESSED}; }}
-QPushButton[variant="success"] {{ background: #1f9d6f; border-color: #1f9d6f; color: white; font-weight: 600; }}
-QPushButton[variant="success"]:hover {{ background: #25b07d; border-color: #25b07d; }}
+QPushButton[variant="success"] {{ background: #16664f; border-color: #278469; color: white; font-weight: 600; }}
+QPushButton[variant="success"]:hover {{ background: #197258; border-color: #39997b; }}
 QPushButton[variant="danger"] {{ background: #c2414b; border-color: #c2414b; color: white; font-weight: 600; }}
 QPushButton[variant="danger"]:hover {{ background: #d24f59; border-color: #d24f59; }}
 QPushButton[variant="danger-ghost"] {{ background: transparent; border-color: #5c2a2e; color: {DANGER}; }}
@@ -177,17 +186,18 @@ QPushButton[variant="icon"] {{
 QPushButton[variant="icon"]:hover {{ background: #262b3a; }}
 QPushButton[variant="tab"] {{ background: transparent; border-color: {BORDER}; color: {TEXT_DIM}; border-radius: 14px; padding: 5px 14px; }}
 QPushButton[variant="tab"]:hover {{ border-color: {BORDER_HOVER}; color: {TEXT}; }}
-QPushButton[variant="tab"]:checked {{ background: #2a2752; border-color: {ACCENT}; color: {TEXT}; font-weight: 600; }}
+QPushButton[variant="tab"]:checked {{ background: #173b38; border-color: {ACCENT}; color: {TEXT}; font-weight: 600; }}
 QPushButton[variant="field"] {{ background: {FIELD}; text-align: left; padding: 4px 8px; font-weight: 400; }}
 QPushButton[variant="field"]:hover {{ border-color: {BORDER_HOVER}; background: {FIELD}; }}
 QPushButton[size="large"] {{ padding: 9px 20px; font-size: 13px; }}
 QPushButton[size="small"] {{ padding: 3px 10px; min-height: 18px; font-size: 12px; }}
 QFrame#SectionHead {{ background: transparent; border: none; }}
+QFrame#SectionHead:focus {{ background: #203437; border-radius: 5px; }}
 QFrame#SectionHead:hover QLabel#SectionTitle {{ color: {TEXT}; }}
 
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit {{
     background: {FIELD}; border: 1px solid {BORDER}; border-radius: 7px;
-    padding: 4px 8px; min-height: 22px; selection-background-color: {ACCENT};
+    padding: 4px 8px; min-height: 22px; selection-background-color: {ACCENT}; selection-color: #04211d;
 }}
 QLineEdit:hover, QSpinBox:hover, QComboBox:hover {{ border-color: {BORDER_HOVER}; }}
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus {{ border-color: {ACCENT}; }}
@@ -200,7 +210,7 @@ QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox::down-arrow {{ image: url("{chevron}"); width: 12px; height: 12px; }}
 QComboBox QAbstractItemView {{
     background: {SURFACE_2}; border: 1px solid {BORDER_HOVER}; border-radius: 6px;
-    selection-background-color: #2d2a5c; padding: 4px;
+    selection-background-color: #20443f; padding: 4px;
 }}
 
 QTextBrowser {{
@@ -224,7 +234,7 @@ QListWidget {{
 }}
 QListWidget::item {{ padding: 6px 8px; border-radius: 6px; }}
 QListWidget::item:hover {{ background: #1b1f2b; }}
-QListWidget::item:selected {{ background: #2a2752; color: {TEXT}; }}
+QListWidget::item:selected {{ background: #173b38; color: {TEXT}; }}
 
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
 QScrollBar::handle:vertical {{ background: #2c3142; border-radius: 3px; min-height: 30px; }}
@@ -240,14 +250,15 @@ QStatusBar QLabel {{ color: {TEXT_DIM}; padding: 0 6px; }}
 
 QMenu {{ background: {SURFACE_2}; border: 1px solid {BORDER_HOVER}; border-radius: 8px; padding: 4px; }}
 QMenu::item {{ padding: 6px 16px; border-radius: 5px; }}
-QMenu::item:selected {{ background: #2a2752; }}
+QMenu::item:selected {{ background: #173b38; }}
+QPushButton:focus, QPushButton[variant="segment"]:focus, QCheckBox::indicator:focus {{ border: 1px solid {ACCENT}; }}
 QMessageBox QLabel {{ color: {TEXT}; }}
 """
 
 
 def apply_theme(app: QApplication) -> None:
     app.setStyle("Fusion")
-    font = QFont("Segoe UI", 10)
+    font = QFont("Segoe UI Variable Text", 10)
     font.setHintingPreference(QFont.PreferNoHinting)
     app.setFont(font)
 
@@ -263,7 +274,7 @@ def apply_theme(app: QApplication) -> None:
         QPalette.ToolTipBase: SURFACE_2,
         QPalette.ToolTipText: TEXT,
         QPalette.Highlight: ACCENT,
-        QPalette.HighlightedText: "#ffffff",
+        QPalette.HighlightedText: "#04211d",
         QPalette.PlaceholderText: TEXT_MUTED,
         QPalette.Link: ACCENT_HOVER,
     }
