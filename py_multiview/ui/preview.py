@@ -76,15 +76,15 @@ class Thumbnail(QLabel):
         painter = QPainter(self)
         area = self.rect().adjusted(1, 1, -1, -1)
         painter.setClipRect(area)
-        painter.setPen(QColor("#18242a"))
+        painter.setPen(QColor(theme.SLATE_LINE))
         for x in range(area.center().x() % 24, area.width(), 24):
             painter.drawLine(x, 1, x, area.bottom())
         for y in range(area.center().y() % 24, area.height(), 24):
             painter.drawLine(1, y, area.right(), y)
         center = area.center()
-        icon = theme.icon("screen", theme.TEXT_MUTED)
+        icon = theme.icon("screen", theme.SLATE_TEXT)
         icon.paint(painter, center.x() - 14, center.y() - 23, 28, 28)
-        painter.setPen(QColor(theme.TEXT_DIM))
+        painter.setPen(QColor(theme.SLATE_TEXT))
         painter.drawText(area.adjusted(0, 45, 0, 0), Qt.AlignCenter, "Aperçu hors ligne")
         painter.end()
 

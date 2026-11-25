@@ -1,8 +1,7 @@
-"""Secondary windows: logs, OMT discovery, routes, preferences, screen identification."""
+"""Secondary windows and panels: logs, OMT discovery, routes, screen identification."""
 
 from __future__ import annotations
 
-import secrets
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
@@ -10,10 +9,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -22,18 +18,17 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
-from .. import __version__, omt, omtlib
+from .. import omt
 from ..config import new_id, normalize_route
 from ..ffmpeg import udp_input_url
-from ..paths import CONFIG_PATH, LOG_PATH
+from ..paths import LOG_PATH
 from ..process import Status
 from . import theme
-from .widgets import Section, StatusPill, button, divider, field_label, label, set_button, spin
+from .widgets import Card, IconTile, StatusPill, button, field_label, label, set_button, spin
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
@@ -186,109 +181,103 @@ class OMTDiscoveryDialog(QDialog):
         super().done(result)
 
 
-class RoutesDialog(QDialog):
-    """Create, edit and run SRT -> UDP multicast routes."""
+class RoutesPanel(QWidget):
+    """Create, edit and run SRT -> UDP multicast routes (the « Routage » page)."""
 
     def __init__(self, main: MainWindow) -> None:
-        super().__init__(main)
+        super().__init__()
         self.main = main
-        self.setWindowTitle("Routage SRT → multicast")
-        self.resize(820, 480)
+        self.setObjectName("Page")
         self._loading = False
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(18, 18, 18, 18)
-        outer.setSpacing(14)
-        layout = QHBoxLayout()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        outer.addLayout(layout, 1)
 
-        left = QVBoxLayout()
-        left.setSpacing(8)
-        intro = label(
-            "Une route reçoit un flux SRT une seule fois et le rediffuse en multicast UDP : "
-            "plusieurs écrans peuvent alors afficher le même flux.",
-            "Dim",
-            wrap=True,
-        )
-        intro.setFixedWidth(260)
-        left.addWidget(intro)
+        side = Card("Routes", "Un flux SRT reçu une fois, rediffusé en multicast UDP : "
+                              "plusieurs écrans peuvent alors l'afficher.")
+        side.setFixedWidth(320)
         self.list = QListWidget()
-        self.list.setFixedWidth(260)
         self.list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list.currentRowChanged.connect(self._on_select)
-        left.addWidget(self.list, 1)
+        side.add_widget(self.list, separated=False)
+        side.body.setSpacing(10)
         btns = QHBoxLayout()
-        add = button("Nouvelle route", variant="primary", icon="plus", icon_color="#ffffff")
+        add = button("Nouvelle route", variant="primary", icon="plus")
         add.clicked.connect(self._add)
-        btns.addWidget(add)
+        btns.addWidget(add, 1)
         self.delete_btn = button(variant="icon", icon="trash", icon_color=theme.DANGER, tooltip="Supprimer la route")
         self.delete_btn.clicked.connect(self._delete)
         btns.addWidget(self.delete_btn)
-        left.addLayout(btns)
-        layout.addLayout(left)
+        side.add_widget(layout=btns, separated=False)
+        layout.addWidget(side, 0, Qt.AlignTop)
 
-        self.form_panel = QWidget()
-        right = QVBoxLayout(self.form_panel)
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(12)
-        head = QHBoxLayout()
+        self.form_panel = Card("Route", "", icon="route")
         self.pill = StatusPill()
-        head.addWidget(self.pill)
-        head.addStretch(1)
-        self.toggle_btn = button("Démarrer", variant="success", icon="play", icon_color="#ffffff")
-        self.toggle_btn.clicked.connect(self._toggle)
-        head.addWidget(self.toggle_btn)
+        self.form_panel.add_action(self.pill)
         logs = button(variant="icon", icon="logs", icon_color=theme.TEXT_DIM, tooltip="Journal ffmpeg")
         logs.clicked.connect(self._logs)
-        head.addWidget(logs)
-        right.addLayout(head)
+        self.form_panel.add_action(logs)
+        self.toggle_btn = button("Démarrer", variant="success", icon="play", icon_color="#ffffff")
+        self.toggle_btn.clicked.connect(self._toggle)
+        self.form_panel.add_action(self.toggle_btn)
 
-        form = QFormLayout()
-        form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
-        form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.name_edit = QLineEdit()
+        self.name_edit.setMinimumWidth(240)
         self.name_edit.editingFinished.connect(self._on_edit)
-        self.in_port = spin(1, 65535, 9001, width=90)
-        self.in_latency = spin(0, 10000, 120, suffix=" ms", width=90)
+        self.in_port = spin(1, 65535, 9001, width=110)
+        self.in_latency = spin(0, 10000, 120, suffix=" ms", width=110)
         self.maddr = QLineEdit()
         self.maddr.setPlaceholderText("239.10.10.10")
+        self.maddr.setFixedWidth(180)
         self.maddr.editingFinished.connect(self._on_edit)
-        self.mport = spin(1, 65535, 1234, width=90)
-        self.ttl = spin(1, 255, 1, width=90)
-        self.ttl.setToolTip("1 = réseau local uniquement")
-        self.pkt = spin(188, 65507, 1316, width=90)
+        self.mport = spin(1, 65535, 1234, width=110)
+        self.ttl = spin(1, 255, 1, width=110)
+        self.pkt = spin(188, 65507, 1316, width=110)
         for w in (self.in_port, self.in_latency, self.mport, self.ttl, self.pkt):
             w.valueChanged.connect(self._on_edit)
-        form.addRow(field_label("Nom"), self.name_edit)
-        form.addRow(field_label("Port SRT entrant"), self.in_port)
-        form.addRow(field_label("Latence SRT"), self.in_latency)
-        form.addRow(divider())
-        form.addRow(field_label("Groupe multicast"), self.maddr)
-        form.addRow(field_label("Port multicast"), self.mport)
-        form.addRow(field_label("TTL"), self.ttl)
-        form.addRow(field_label("Taille paquet"), self.pkt)
-        right.addLayout(form)
-        self.detail = label("", "Detail", wrap=True)
+        card = self.form_panel
+        card.add_row("Nom", "Affiché dans la liste des sources des flux.", self.name_edit)
+        card.add_row("Port SRT entrant", "La régie envoie vers ce port (mode caller).", self.in_port)
+        card.add_row("Latence SRT", "Identique ou supérieure à celle de l'émetteur.", self.in_latency)
+        card.add_row("Groupe multicast", "Adresse de diffusion sur le réseau local.", self.maddr)
+        card.add_row("Port multicast", "", self.mport)
+        card.add_row("TTL", "1 = réseau local uniquement.", self.ttl)
+        card.add_row("Taille de paquet", "1316 convient à la plupart des réseaux.", self.pkt)
+        self.detail = label("", "Mono", wrap=True)
         self.detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        right.addWidget(self.detail)
-        right.addStretch(1)
-        layout.addWidget(self.form_panel, 1)
+        callout = QFrame()
+        callout.setObjectName("Callout")
+        inner = QVBoxLayout(callout)
+        inner.setContentsMargins(12, 10, 12, 10)
+        inner.addWidget(self.detail)
+        card.add_widget(callout, separated=False)
 
-        self.empty = label("Aucune route. Crée-en une avec « Nouvelle route ».", "Muted")
-        self.empty.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.empty, 1)
-        footer = QHBoxLayout()
-        footer.addStretch(1)
-        close_btn = button("Fermer", variant="primary")
-        close_btn.clicked.connect(self.accept)
-        footer.addWidget(close_btn)
-        outer.addLayout(footer)
+        right = QVBoxLayout()
+        right.setSpacing(0)
+        right.addWidget(self.form_panel)
+        self.empty = Card()
+        empty_col = self.empty.body
+        empty_col.setSpacing(8)
+        tile = IconTile("route", 48)
+        empty_col.addWidget(tile, 0, Qt.AlignHCenter)
+        title = label("Aucune route", "EmptyTitle")
+        title.setAlignment(Qt.AlignCenter)
+        empty_col.addWidget(title)
+        hint = label("Crée une route pour partager un même flux SRT entre plusieurs écrans.", "Muted", wrap=True)
+        hint.setAlignment(Qt.AlignCenter)
+        empty_col.addWidget(hint)
+        self.empty.body.setContentsMargins(0, 30, 0, 30)
+        right.addWidget(self.empty)
+        right.addStretch(1)
+        layout.addLayout(right, 1)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_status)
         self._timer.start(500)
+        self._reload()
+
+    def reload(self) -> None:
         self._reload()
 
     # -- helpers -------------------------------------------------------------
@@ -306,7 +295,7 @@ class RoutesDialog(QDialog):
         self.list.blockSignals(True)
         self.list.clear()
         for r in self._routes():
-            item = QListWidgetItem(r["name"])
+            item = QListWidgetItem(theme.icon("route", theme.TEXT_DIM), r["name"])
             item.setData(Qt.UserRole, r["id"])
             self.list.addItem(item)
         self.list.blockSignals(False)
@@ -331,6 +320,7 @@ class RoutesDialog(QDialog):
             self.mport.setValue(route["multicastPort"])
             self.ttl.setValue(route["ttl"])
             self.pkt.setValue(route["pktSize"])
+            self.form_panel.title.setText(route["name"])
         finally:
             self._loading = False
         self._refresh_status()
@@ -357,12 +347,17 @@ class RoutesDialog(QDialog):
         item = self.list.currentItem()
         if item:
             item.setText(route["name"])
+        self.form_panel.title.setText(route["name"])
         self.main.on_routes_changed()
 
     def _refresh_status(self) -> None:
         route = self._current()
         if not route:
             return
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            state = self.main.engine.route_info(item.data(Qt.UserRole)).status.value
+            item.setIcon(theme.icon("route", theme.STATE_COLORS[state]))
         info = self.main.engine.route_info(route["id"])
         running = route["id"] in self.main.engine.active_routes
         self.pill.set_status(info.status)
@@ -372,7 +367,7 @@ class RoutesDialog(QDialog):
             set_button(self.toggle_btn, "Démarrer", "success", "play")
         out = udp_input_url(route["multicastAddr"], route["multicastPort"]).split("?")[0]
         host = self.main.engine.host_ip or "<IP>"
-        text = f"Entrée srt://{host}:{route['inputPort']}  →  sortie {out}"
+        text = f"Entrée  srt://{host}:{route['inputPort']}\nSortie  {out}"
         if info.detail:
             text += f"\n{info.detail}"
         elif info.status == Status.WAITING:
@@ -436,229 +431,6 @@ class RoutesDialog(QDialog):
             self.main.show_logs(f"route:{route['id']}", f"Journal — route {route['name']}")
 
 
-class PreferencesDialog(QDialog):
-    def __init__(self, main: MainWindow) -> None:
-        super().__init__(main)
-        self.main = main
-        self.setWindowTitle("Préférences")
-        self.resize(660, 720)
-        config = main.config
-
-        # The sections scroll, the buttons stay in view: the list of settings
-        # outgrew small screens.
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 8, 20)
-        outer.setSpacing(14)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        content = QWidget()
-        content.setObjectName("Transparent")
-        scroll.setWidget(content)
-        outer.addWidget(scroll, 1)
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(18)
-
-        general = Section("Réception")
-        self.exclude_primary = QCheckBox("Ne jamais afficher de flux sur l'écran principal")
-        self.exclude_primary.setChecked(config["excludePrimaryDisplay"])
-        general.body.addWidget(self.exclude_primary)
-        decode_row = QHBoxLayout()
-        decode_row.addWidget(field_label("Décodage vidéo"))
-        self.decode = QComboBox()
-        available = main.engine.tools.gpu_decoders()
-        for key, text in (
-            ("cpu", "Processeur (recommandé, tous codecs)"),
-            ("nvidia", "GPU NVIDIA — NVDEC (H.264)"),
-            ("intel", "GPU Intel — Quick Sync (H.264)"),
-            ("amd", "GPU AMD — AMF (H.264)"),
-        ):
-            supported = key == "cpu" or key in available
-            self.decode.addItem(text if supported else f"{text} — non disponible", key)
-            if not supported:
-                self.decode.model().item(self.decode.count() - 1).setEnabled(False)
-        index = self.decode.findData(config["receiver"]["decode"])
-        self.decode.setCurrentIndex(max(0, index))
-        self.decode.setToolTip(
-            "Le décodage GPU soulage le processeur avec de nombreux flux H.264.\n"
-            "Les flux OMT ne sont pas concernés (décodés par libomt)."
-        )
-        decode_row.addWidget(self.decode, 1)
-        general.body.addLayout(decode_row)
-        layout.addWidget(general)
-
-        emission = Section("Émission OMT")
-        self.sender_native = QCheckBox("Émettre en direct par libomt (expérimental)")
-        self.sender_native.setChecked(config["sender"].get("native", False))
-        self.sender_native.setEnabled(omtlib.available())
-        self.sender_native.setToolTip(
-            "Décoché (par défaut), l'écran est capturé et publié par FFmpeg (gdigrab).\n"
-            "Coché, libomt émet sans processus intermédiaire : plus léger, mais\n"
-            "l'image est noire sur certaines machines."
-        )
-        emission.body.addWidget(self.sender_native)
-        emission.body.addWidget(
-            label("FFmpeg est le chemin éprouvé. libomt encode l'image lui-même et coûte moins cher "
-                  "en processeur, mais donne une image noire sur certaines machines.", "Muted", wrap=True)
-        )
-        layout.addWidget(emission)
-
-        api = Section("Pilotage à distance")
-        self.api_enabled = QCheckBox("Ouvrir l'API locale (py-livedeck, Companion, domotique…)")
-        self.api_enabled.setChecked(config["api"]["enabled"])
-        api.body.addWidget(self.api_enabled)
-        api_row = QHBoxLayout()
-        api_row.addWidget(field_label("Port"))
-        self.api_port = spin(1, 65535, config["api"]["port"], width=96)
-        api_row.addWidget(self.api_port)
-        self.api_local = QCheckBox("Ce poste uniquement")
-        self.api_local.setChecked(config["api"]["localOnly"])
-        self.api_local.setToolTip("Décoché, l'API est joignable depuis le réseau local.")
-        api_row.addWidget(self.api_local)
-        api_row.addStretch(1)
-        api.body.addLayout(api_row)
-        token_row = QHBoxLayout()
-        token_row.addWidget(field_label("Jeton"))
-        self.api_token = QLineEdit(config["api"].get("token", ""))
-        self.api_token.setPlaceholderText("facultatif : vide = accès libre")
-        self.api_token.setToolTip("Rempli, chaque requête doit porter l'en-tête\n"
-                                  "« Authorization: Bearer <jeton> » (à coller dans py-livedeck).")
-        token_row.addWidget(self.api_token, 1)
-        generate = button("Générer", variant="ghost")
-        generate.clicked.connect(lambda: self.api_token.setText(secrets.token_urlsafe(24)))
-        token_row.addWidget(generate)
-        api.body.addLayout(token_row)
-        self.api_hint = label("", "Mono", wrap=True)
-        self.api_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        api.body.addWidget(self.api_hint)
-        api.body.addWidget(
-            label("Sans jeton, l'API est ouverte à tout le réseau, comme les autres services pilotés par "
-                  "py-livedeck : à n'ouvrir que sur un réseau de confiance.", "Muted", wrap=True)
-        )
-        self.api_enabled.stateChanged.connect(self._refresh_api_hint)
-        self.api_port.valueChanged.connect(self._refresh_api_hint)
-        self.api_local.stateChanged.connect(self._refresh_api_hint)
-        self._refresh_api_hint()
-        layout.addWidget(api)
-
-        startup = Section("Au lancement")
-        self.auto_rx = QCheckBox("Démarrer automatiquement la réception")
-        self.auto_rx.setChecked(config["autoStartReceiver"])
-        self.auto_tx = QCheckBox("Démarrer automatiquement l'émission OMT")
-        self.auto_tx.setChecked(config["autoStartSender"])
-        startup.body.addWidget(self.auto_rx)
-        startup.body.addWidget(self.auto_tx)
-        layout.addWidget(startup)
-
-        window = Section("Fenêtre")
-        self.close_minimizes = QCheckBox("La croix réduit la fenêtre au lieu de quitter")
-        self.close_minimizes.setChecked(config["closeToMinimize"])
-        self.close_minimizes.setToolTip(
-            "Les flux et l'émission continuent. Pour quitter vraiment : Ctrl+Q,\n"
-            "ou clic droit sur l'icône py-multiview près de l'horloge."
-        )
-        window.body.addWidget(self.close_minimizes)
-        layout.addWidget(window)
-
-        updates = Section("Mises à jour")
-        check_now = button("Rechercher maintenant", variant="ghost", icon="download", icon_color=theme.TEXT_DIM)
-        check_now.clicked.connect(lambda: main.open_update())
-        updates.add_action(check_now)
-        self.auto_update = QCheckBox("Rechercher les nouvelles versions au lancement")
-        self.auto_update.setChecked(config["updates"]["autoCheck"])
-        self.auto_update.setToolTip("Interroge les releases GitHub du projet, puis toutes les 6 heures.\n"
-                                    "Rien n'est installé sans votre accord.")
-        updates.body.addWidget(self.auto_update)
-        layout.addWidget(updates)
-
-        diag = Section("Moteur FFmpeg")
-        refresh = button("Re-détecter", variant="ghost", icon="refresh", icon_color=theme.TEXT_DIM)
-        refresh.clicked.connect(self._redetect)
-        diag.add_action(refresh)
-        self.diag_text = label("", "Mono", wrap=True)
-        self.diag_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        diag.body.addWidget(self.diag_text)
-        layout.addWidget(diag)
-        self._fill_diag()
-
-        files = Section("Fichiers")
-        files.body.addWidget(label(f"Configuration : {CONFIG_PATH}\nJournal : {LOG_PATH}", "Mono", wrap=True))
-        files_row = QHBoxLayout()
-        open_cfg = button("Dossier de configuration", icon="folder")
-        open_cfg.clicked.connect(lambda: main.open_path(CONFIG_PATH.parent))
-        files_row.addWidget(open_cfg)
-        open_logs = button("Journaux", icon="logs")
-        open_logs.clicked.connect(lambda: main.open_path(LOG_PATH.parent))
-        files_row.addWidget(open_logs)
-        files_row.addStretch(1)
-        reset = button("Réinitialiser…", variant="danger-ghost")
-        reset.clicked.connect(self._reset)
-        files_row.addWidget(reset)
-        files.body.addLayout(files_row)
-        layout.addWidget(files)
-
-        layout.addStretch(1)
-        footer = QHBoxLayout()
-        footer.addWidget(label(f"py-multiview {__version__}", "Muted"))
-        footer.addStretch(1)
-        cancel = button("Annuler")
-        cancel.clicked.connect(self.reject)
-        footer.addWidget(cancel)
-        save = button("Enregistrer", variant="primary")
-        save.clicked.connect(self._save)
-        footer.addWidget(save)
-        footer.setContentsMargins(0, 0, 12, 0)
-        outer.addLayout(footer)
-
-    def _fill_diag(self) -> None:
-        tools = self.main.engine.tools
-        lines = [f"• {tc.describe()}\n   {tc.directory}" for tc in tools.toolchains] or ["Aucun FFmpeg trouvé."]
-        checks = [
-            ("Réception SRT", tools.player_for("srt")),
-            ("Réception OMT", tools.player_for("omt")),
-            ("Routage SRT", tools.ffmpeg_for("srt")),
-            ("Émission OMT", tools.ffmpeg_for("omt")),
-        ]
-        summary = "   ".join(f"{name} {'✓' if tc else '✗'}" for name, tc in checks)
-        self.diag_text.setText(summary + "\n\n" + "\n".join(lines))
-
-    def _redetect(self) -> None:
-        self.main.engine.tools.refresh()
-        self._fill_diag()
-        self.main.refresh_engine_summary()
-
-    def _refresh_api_hint(self) -> None:
-        if not self.api_enabled.isChecked():
-            self.api_hint.setText("API fermée.")
-            return
-        host = "127.0.0.1" if self.api_local.isChecked() else (self.main.host_ip or "127.0.0.1")
-        base = f"http://{host}:{self.api_port.value()}"
-        self.api_hint.setText(f"py-livedeck : {base}  (API Stream Deck, {base}/api/deck/state)\n"
-                              f"Requête simple : POST {base}/sender/toggle")
-
-    def _reset(self) -> None:
-        if self.main.reset_configuration():
-            self.reject()
-
-    def _save(self) -> None:
-        config = self.main.config
-        config["excludePrimaryDisplay"] = self.exclude_primary.isChecked()
-        config["receiver"]["decode"] = self.decode.currentData()
-        config["sender"]["native"] = self.sender_native.isChecked()
-        config["api"]["enabled"] = self.api_enabled.isChecked()
-        config["api"]["port"] = self.api_port.value()
-        config["api"]["localOnly"] = self.api_local.isChecked()
-        config["api"]["token"] = self.api_token.text().strip()
-        config["autoStartReceiver"] = self.auto_rx.isChecked()
-        config["autoStartSender"] = self.auto_tx.isChecked()
-        config["closeToMinimize"] = self.close_minimizes.isChecked()
-        config["updates"]["autoCheck"] = self.auto_update.isChecked()
-        self.main.on_preferences_changed()
-        self.accept()
-
-
 class _Overlay(QLabel):
     clicked = Signal()
 
@@ -685,12 +457,12 @@ class ScreenIdentifier(QObject):
             win.setAttribute(Qt.WA_ShowWithoutActivating)
             win.setAlignment(Qt.AlignCenter)
             win.setStyleSheet(
-                f"background: rgba(14,16,22,235); color: {theme.TEXT}; border: 6px solid {theme.ACCENT};"
+                f"background: rgba(18,18,23,240); color: #ffffff; border: 6px solid {theme.ACCENT}; border-radius: 18px;"
                 "font-size: 46px; font-weight: 700;"
             )
-            primary = "<br><span style='font-size:22px;color:#a1a9ba'>écran principal</span>" if d.get("isPrimary") else ""
+            primary = "<br><span style='font-size:22px;color:#a9a9bb'>écran principal</span>" if d.get("isPrimary") else ""
             win.setText(
-                f"{d['name']}<br><span style='font-size:26px;color:#a1a9ba'>{d['width']}×{d['height']}</span>{primary}"
+                f"{d['name']}<br><span style='font-size:26px;color:#a9a9bb'>{d['width']}×{d['height']}</span>{primary}"
             )
             geo = screen.geometry()
             win.setGeometry(geo.x() + geo.width() // 4, geo.y() + geo.height() // 3, geo.width() // 2, geo.height() // 3)

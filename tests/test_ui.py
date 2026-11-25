@@ -6,7 +6,7 @@ import pytest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from py_multiview.config import normalize_config  # noqa: E402
-from py_multiview.ui.widgets import CollapsibleSection, ElidedLabel  # noqa: E402
+from py_multiview.ui.widgets import Card, ElidedLabel, Switch  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -14,46 +14,32 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def test_sidebar_state_keeps_only_booleans():
-    config = normalize_config({"sidebar": {"sender": True, "routes": "oui", "screens": False}})
-    assert config["sidebar"] == {"sender": True, "screens": False}  # "oui" is not a state
-    assert normalize_config({"sidebar": "nope"})["sidebar"] == {}
-    assert normalize_config({})["sidebar"] == {}
+def test_interface_settings_are_normalized():
+    config = normalize_config({"sidebar": {"sender": True}, "appearance": "fluo", "streamView": "x"})
+    assert "sidebar" not in config  # folded blocks of the former side column
+    assert config["appearance"] == "light"
+    assert config["streamView"] == "live"
+    assert config["page"] == "streams"
+    config = normalize_config({"appearance": "dark", "page": "routes", "streamView": "edit"})
+    assert (config["appearance"], config["page"], config["streamView"]) == ("dark", "routes", "edit")
 
 
-def test_section_folds_to_its_header(qapp):
-    section = CollapsibleSection("Émission", "sender", expanded=False)
-    body = QLabel("contenu")
-    section.body.addWidget(body)
-    section.show()
-    assert not section.content.isVisible()
-    section.toggle()
-    assert section.is_expanded() and section.content.isVisible()
-    section.toggle()
-    assert not section.content.isVisible()
-
-
-def test_section_reports_user_toggles_but_not_restores(qapp):
-    section = CollapsibleSection("Retour", "monitor", expanded=False)
+def test_switch_behaves_like_a_checkbox(qapp):
     seen = []
-    section.toggled.connect(seen.append)
-    section.set_expanded(True)  # the user opened it
-    section.set_expanded(False, notify=False)  # restoring a saved state must stay silent
-    section.set_expanded(False, notify=False)
-    assert seen == [True]
+    switch = Switch("Toujours au-dessus")
+    switch.toggled.connect(seen.append)
+    switch.show()
+    switch.click()
+    assert switch.isChecked() and seen == [True]
+    assert switch.accessibleName() == "Toujours au-dessus" and switch.text() == ""
 
 
-def test_header_keeps_the_action_and_summary_when_folded(qapp):
-    from PySide6.QtWidgets import QPushButton
-
-    section = CollapsibleSection("Émission", "sender", expanded=False)
-    action = QPushButton("Émettre")
-    section.add_action(action)
-    section.set_summary("Écran 1  ·  25 i/s", "waiting")
-    section.show()
-    assert action.isVisible()
-    assert section.summary.full_text() == "Écran 1  ·  25 i/s"
-    assert section.summary.property("state") == "waiting"
+def test_card_rows_are_separated(qapp):
+    card = Card("Émission", "sous-titre", "broadcast")
+    card.add_row("Nom", "description", QLabel("x"))
+    card.add_row("Cadence", "", QLabel("y"))
+    # row, divider, row
+    assert card.body.count() == 3
 
 
 def test_summary_is_cut_instead_of_widening_the_column(qapp):

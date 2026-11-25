@@ -114,11 +114,15 @@ def main() -> None:
     server.listen(key)
 
     # Imported late so the QApplication exists before any widget code runs.
+    from .config import load_config
     from .engine import Engine
-    from .ui.main_window import MainWindow
-    from .ui.theme import apply_theme
+    from .ui import theme
 
-    apply_theme(app)
+    # The palette is read while widgets are built: pick it before the window exists.
+    theme.set_mode(load_config().get("appearance", "light"))
+    from .ui.main_window import MainWindow
+
+    theme.apply_theme(app)
     engine = Engine()
     engine.tools.refresh()
     window = MainWindow(engine)

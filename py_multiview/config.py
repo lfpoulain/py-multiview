@@ -228,11 +228,11 @@ def normalize_config(config) -> dict:
     monitor = config.get("monitor")
     config["monitor"] = normalize_monitor(monitor if isinstance(monitor, dict) else {})
 
-    # Which sidebar blocks are open; a block that was never toggled keeps its default.
-    sidebar = config.get("sidebar")
-    config["sidebar"] = (
-        {str(k): bool(v) for k, v in sidebar.items() if isinstance(v, bool)} if isinstance(sidebar, dict) else {}
-    )
+    # Interface: last page shown, light or dark theme, stream view.
+    config.pop("sidebar", None)  # folded blocks of the former side column
+    config["page"] = _str(config.get("page"), "streams")
+    config["appearance"] = config.get("appearance") if config.get("appearance") in ("light", "dark") else "light"
+    config["streamView"] = "edit" if config.get("streamView") == "edit" else "live"
 
     api = config.get("api")
     api = dict(api) if isinstance(api, dict) else {}

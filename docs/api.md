@@ -9,7 +9,7 @@ Deux contrats cohabitent :
 
 ## Ouvrir l'API
 
-**Préférences → Pilotage à distance** : cocher *Ouvrir l'API locale*, choisir le port (5090 par défaut) et décocher *Ce poste uniquement* pour la rendre joignable depuis le réseau. L'adresse exacte est affichée sous les réglages.
+**Réglages → Pilotage à distance** : activer *Ouvrir l'API locale*, choisir le port (5090 par défaut) et désactiver *Ce poste uniquement* pour la rendre joignable depuis le réseau. L'adresse exacte est affichée sous les réglages.
 
 L'API est **fermée par défaut**.
 

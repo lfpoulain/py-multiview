@@ -29,7 +29,7 @@ Ce que cela change par rapport à un passage par FFmpeg :
 
 La capture d'écran est un `BitBlt` GDI dans une DIB réutilisée (`capture.py`), ce que fait `gdigrab` ; les octets sont déjà en BGRA, le format que `libomt` encode directement en VMX1. La zone demandée est ramenée dans le bureau virtuel si elle en sort — avec plusieurs écrans à des échelles différentes, la position annoncée peut tomber à côté, et `BitBlt` ne copie alors rien. Comme GDI ne sait pas relire le contenu rendu par le GPU, l'émission vérifie une fois par seconde que l'image n'est pas uniformément noire et l'écrit dans son journal : cela sépare une capture noire d'un problème de transport.
 
-Le repli FFmpeg reste disponible (Préférences → *Émettre en direct par libomt*), ce qui permet de comparer les deux chaînes sur une même machine.
+Le repli FFmpeg reste disponible (Émission OMT → Avancé → *Émettre en direct par libomt*), ce qui permet de comparer les deux chaînes sur une même machine.
 
 Les deux tâches tournent sur des threads de l'application plutôt que dans des processus enfants (`native.py`), avec la même surface qu'un processus supervisé : état, relance avec temporisation croissante, journal. Si `libomt.dll` ne se charge pas, `omtlib.available()` est faux et tout repasse par les commandes FFmpeg, qui restent testées.
 
@@ -44,7 +44,7 @@ Aucun build FFmpeg ne sait tout faire, l'application en embarque donc deux :
 | `bin/omt/` | FFmpeg compilé avec **libomt** (Open Media Transport), et `libomt.dll` elle-même | Affichage des sources OMT, et repli pour l'émission et le retour audio |
 | `bin/standard/` | FFmpeg [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) « essentials » avec **libsrt** et les décodeurs GPU | Réception SRT, routes multicast, lecture UDP |
 
-Au démarrage, chaque binaire est interrogé (`-protocols`, `-formats`, `-decoders`) sur ce qu'il sait réellement faire, et chaque tâche reçoit un build capable de l'exécuter. Un FFmpeg du `PATH` sert de dernier recours. Le diagnostic est visible dans **Préférences → Moteur FFmpeg**.
+Au démarrage, chaque binaire est interrogé (`-protocols`, `-formats`, `-decoders`) sur ce qu'il sait réellement faire, et chaque tâche reçoit un build capable de l'exécuter. Un FFmpeg du `PATH` sert de dernier recours. Le diagnostic est visible dans **Réglages → Système → Moteur FFmpeg**.
 
 ## Le moteur à état désiré
 
