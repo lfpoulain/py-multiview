@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
+
 from .ffmpeg import audio_packet_frames, creationflags
 
 log = logging.getLogger(__name__)
@@ -530,32 +532,32 @@ class LiveCapture:
             self._thread.join(timeout=1.0)
 
 
-def stretch(data: bytes, channels: int, delta: int) -> bytes:
-    """Interleaved float32 resampled to ``delta`` frames more (or fewer).
+@lru_cache(maxsize=1)
+def _sinc_filters():
+    """Unit-gain fractional-delay filters, shared by all sample rates and channels."""
+    offsets = np.arange(-15, 17)
+    phase = np.arange(1025)[:, None] / 1024
+    distance = phase - offsets
+    window = np.i0(8 * np.sqrt(np.maximum(0, 1 - (distance / 16) ** 2))) / np.i0(8)
+    weights = np.sinc(distance) * window
+    return offsets, weights / weights.sum(axis=1, keepdims=True)
 
-    Linear interpolation over the whole chunk: its first and last frames are
-    kept as they are, so the chunk still joins its neighbours without a step.
-    Meant for a frame or two at a time, which is inaudible.
-    """
-    samples = array("f")
-    samples.frombytes(data[: len(data) - len(data) % 4])
-    count = len(samples) // channels
+
+def stretch(data: bytes, channels: int, delta: int) -> bytes:
+    """Apply a small clock correction without attenuating treble in corrected blocks."""
+    count = len(data) // (4 * channels)
     wanted = count + delta
     if not delta or count < 2 or wanted < 2:
         return data
-    step = (count - 1) / (wanted - 1)
-    out = array("f", bytes(4 * wanted * channels))
-    for c in range(channels):
-        plane = samples[c::channels]
-        plane.append(plane[-1])
-        resampled = array("f", bytes(4 * wanted))
-        for j in range(wanted):
-            position = j * step
-            i = int(position)
-            left = plane[i]
-            resampled[j] = left + (plane[i + 1] - left) * (position - i)
-        out[c::channels] = resampled
-    return out.tobytes()
+    samples = np.frombuffer(data, dtype="<f4", count=count * channels).reshape(count, channels)
+    offsets, filters = _sinc_filters()
+    positions = np.linspace(0, count - 1, wanted)
+    base = positions.astype(np.intp)
+    phase = np.rint((positions - base) * (len(filters) - 1)).astype(np.intp)
+    indices = np.clip(base[:, None] + offsets, 0, count - 1)
+    out = np.einsum("nt,ntc->nc", filters[phase], samples[indices])
+    out[0], out[-1] = samples[0], samples[-1]
+    return out.astype("<f4").tobytes()
 
 
 class SteadyStream:
@@ -585,6 +587,9 @@ class SteadyStream:
         self.adjusted = 0  # frames added (+) or removed (-) for clock drift
         self.resyncs = 0
         self.dropped = 0
+        self._starvations = 0
+        self._reported = (0, 0)
+        self._next_report = 0.0
         self._buffer = bytearray()
         self._pending = b""  # resampled frames left over for the next packet
         self._limit = int(self.rate * self.MAX_BUFFER) * self.frame_bytes
@@ -592,6 +597,7 @@ class SteadyStream:
         self._last_push = 0.0
         self._ready_at: float | None = None
         self._playing = False
+        self._empty_packet = False
         self._target = self.PREFILL
         self._error = self._debt = 0.0
 
@@ -658,6 +664,7 @@ class SteadyStream:
                 if self._ready_at is None or now + 1e-9 < self._ready_at:
                     return self._silence
                 self._playing = True
+                self._empty_packet = False
                 self._target = min(self.PREFILL + self._period, max(self.PREFILL, level))
                 self._error = self._debt = 0.0
 
@@ -681,8 +688,30 @@ class SteadyStream:
                 del self._buffer[:size]
                 needed -= count + delta
             if needed > 0:
+                self._starvations += 1
+                # A callback can straddle the deadline by just a few samples.
+                # Fit its tail into the packet within the usual stretch limit.
+                if blocks:
+                    block, delta = blocks[-1]
+                    count = len(block) // self.frame_bytes
+                    limit = int(count * self.MAX_CORRECTION)
+                    if needed <= limit and abs(delta + needed) <= limit:
+                        blocks[-1] = (block, delta + needed)
+                        self.adjusted += needed
+                        needed = 0
+            # One late callback must not trigger 100 ms of startup silence.
+            # A second wholly empty deadline signals a sustained interruption.
+            empty = needed == self.packet_frames
+            if empty and self._empty_packet:
                 self._playing = False
                 self._ready_at = None
+            self._empty_packet = empty
+            counts = (self._starvations, self.dropped)
+        if counts != self._reported and now >= self._next_report:
+            log.info("Émission audio depuis le démarrage : tampon épuisé %d fois (silence ou retard "
+                     "de capture), %d échantillons par canal écartés", *counts)
+            self._reported = counts
+            self._next_report = now + 5
         data = self._pending + b"".join(
             stretch(block, self.channels, delta) if delta else block for block, delta in blocks
         )

@@ -13,6 +13,7 @@ programmes séparés, lancés comme processus indépendants.
 | Qt 6 via PySide6 | bundle PyInstaller | LGPL v3 | https://www.qt.io / https://pypi.org/project/PySide6/ |
 | screeninfo | bundle PyInstaller | MIT | https://github.com/rr-/screeninfo |
 | PyAudioWPatch (PortAudio) | bundle PyInstaller | MIT | https://github.com/s0d3s/PyAudioWPatch |
+| NumPy | bundle PyInstaller | BSD-3-Clause | https://numpy.org |
 | Python | bundle PyInstaller | PSF License | https://www.python.org |
 
 Le texte de licence de FFmpeg standard est copié dans `bin/standard/LICENSE.txt` lors de son

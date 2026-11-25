@@ -1,3 +1,4 @@
+import math
 import struct
 import sys
 import threading
@@ -332,6 +333,24 @@ def test_stretch_keeps_both_ends_and_the_shape():
     assert len(out) == 2 * 49 and all(abs(out[i] + out[i + 1]) < 1e-6 for i in range(0, len(out), 2))
 
 
+@pytest.mark.parametrize("delta", [-4, -1, 1, 4])
+def test_clock_correction_preserves_treble_throughout_the_packet(delta):
+    # A constant marker survives even linear interpolation. Independent
+    # high-frequency tones reveal the gain dips within a corrected packet.
+    def stereo(t):
+        return (0.5 * math.sin(2 * math.pi * 12000 / 48000 * t),
+                0.4 * math.cos(2 * math.pi * 18000 / 48000 * t))
+
+    original = array("f", (v for i in range(960) for v in stereo(i)))
+    output = array("f", audio.stretch(original.tobytes(), 2, delta))
+    frames = 960 + delta
+    assert len(output) == frames * 2
+    for i in range(16, frames - 16):
+        expected = stereo(i * 959 / (frames - 1))
+        assert max(abs(output[2 * i + c] - expected[c]) for c in range(2)) < 0.002
+    assert output[:2] == original[:2] and output[-2:] == original[-2:]
+
+
 def test_steady_stream_follows_the_clock_without_a_click():
     # The bug this guards against: with a sound card slower than the PC's
     # clock, silence was slipped between real samples as soon as the stream
@@ -375,6 +394,28 @@ def test_steady_stream_jumps_once_after_a_long_hole():
     assert len(data) == 4 * card.chunk and card.stream.resyncs == 1
     due = (card.now - 1000.0 - audio.SteadyStream.PREFILL) * 48000
     assert abs(card.stream.written - due) <= card.chunk
+
+
+@pytest.mark.parametrize(("late_frames", "silent_frames"), [(1, 0), (240, 240), (960, 960)])
+def test_brief_capture_shortfall_does_not_restart_playout(late_frames, silent_frames):
+    # 80 ms of callback delay drains the reserve at t=4 s. The missing
+    # samples arrive one callback later, while the output clock keeps running.
+    frame = float_bytes(0.25, -0.5)
+    stream = audio.SteadyStream(48000, 2, origin=0.0, clock=lambda: ms / 1000)
+    for ms in range(4501):
+        if 0 < ms < 4000 and ms % 20 == 0:
+            stream.push(frame * 960)
+        elif ms >= 4080 and ms % 20 == 0:
+            frames = 960 - late_frames if ms == 4080 else 960
+            stream.push(frame * frames)
+        elif ms == 4090:
+            stream.push(frame * late_frames)
+        data = stream.pull()
+        if ms == 4080:
+            assert data == frame * (960 - silent_frames) + bytes(8 * silent_frames)
+        elif ms >= 4000 and ms % 20 == 0:
+            assert data == frame * 960, ms
+    assert stream.resyncs == stream.dropped == 0
 
 
 def test_steady_stream_keeps_half_a_second_when_nobody_pulls():

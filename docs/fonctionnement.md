@@ -91,7 +91,11 @@ Le son d’un programme est capturé à 48 kHz en stéréo. Windows peut remettr
 
 Quand la source se tait, l’émetteur termine les échantillons en réserve et continue au même rythme avec du silence. Un son plus court qu’une trame est conservé en entier. L’ouverture de la source, sa surveillance et sa reconnexion tournent sur un thread distinct. Une activation WASAPI lente laisse ainsi l’image et les trames audio continuer.
 
+Si un bloc de capture arrive en retard, l’émetteur reprend les échantillons disponibles dès la prochaine échéance. Quand il manque seulement quelques échantillons, il ajuste la durée du dernier bloc dans la limite de 0,5 %. Au-delà, il complète la trame avec la seule durée de silence nécessaire. Deux trames consécutives entièrement vides déclenchent une nouvelle mise en réserve au retour de la source.
+
 Pour compenser l’écart entre l’horloge de capture et celle du PC, l’émetteur suit la quantité de son en réserve et l’âge du dernier bloc reçu. Il lisse cette mesure sur 2,5 s et tolère une variation de 4 ms. Un écart persistant entraîne une correction progressive par interpolation, plafonnée à 0,5 %. Si l’envoi se bloque plus de 250 ms, l’émetteur reprend à la position courante avec les échantillons récents.
+
+Les blocs corrigés utilisent une interpolation par sinus cardinal fenêtré afin de préserver le niveau des aigus. Si la réserve se vide ou que des échantillons sont écartés, le journal de l’application indique les compteurs cumulés depuis le démarrage du flux. Une application source qui cesse de produire des échantillons peut aussi vider la réserve. Pour localiser une coupure entendue sur des haut-parleurs en régie, comparer son instant avec le journal de l’émetteur et avec un enregistrement du bus vMix envoyé aux haut-parleurs.
 
 **Avec FFmpeg**, l’entrée standard transporte les échantillons en WAV float de durée ouverte. La lecture est limitée à 20 ms par paquet, y compris lorsque la source est à 44,1 kHz ou compte plus de deux canaux. FFmpeg convertit à 48 kHz puis forme les trames de 960 échantillons. Les entrées DirectShow gardent leur propre capture et leur compensation d’horloge.
 
